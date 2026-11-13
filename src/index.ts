@@ -7,6 +7,7 @@ import type { Env } from "./env";
 import { registerHttp } from "./http";
 import type { AgentConfig } from "./model";
 import { RunQueue } from "./queue";
+import { registerSettings } from "./settings";
 import { authorRole } from "./role";
 import { titleFrom } from "./title";
 
@@ -19,6 +20,7 @@ export default definePlugin<AgentConfig>({
 
     registerCommands(env, queue);
     registerHttp(env, queue);
+    registerSettings(ctx);
 
     ctx.events.after("message.create", (e) => {
       const { message, parts } = e.payload;

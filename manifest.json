@@ -6,6 +6,7 @@
   "description": "Run queue, provider bridging, fallbacks and slash commands.",
   "valet": "^0.1.0",
   "main": "./src/index.ts",
+  "provides": ["settings@1"],
   "dependencies": {
     "valet-contextmanager": "^0.1.0"
   },
