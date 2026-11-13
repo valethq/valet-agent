@@ -2,11 +2,13 @@ import { definePlugin } from "@valethq/sdk";
 import "./context-types";
 import { AgentSessions } from "./agents";
 import { registerCommands } from "./commands";
+import { textOf } from "./content";
 import type { Env } from "./env";
 import { registerHttp } from "./http";
 import type { AgentConfig } from "./model";
 import { RunQueue } from "./queue";
 import { authorRole } from "./role";
+import { titleFrom } from "./title";
 
 export default definePlugin<AgentConfig>({
   activate(ctx) {
@@ -20,6 +22,11 @@ export default definePlugin<AgentConfig>({
     ctx.events.after("message.create", (e) => {
       const { message, parts } = e.payload;
       if (e.cancelled || message.role !== "user" || message.status !== "complete") return;
+      const session = ctx.store.sessions.get(message.sessionId);
+      if (session?.title === null) {
+        const title = titleFrom(textOf(parts));
+        if (title) void ctx.store.sessions.update(session.id, { title }).catch(() => {});
+      }
       const role = authorRole(ctx.store, message.authorPrincipalId, e.caller);
       queue.enqueue({ sessionId: message.sessionId, message, parts, role });
     });
@@ -37,5 +44,20 @@ export default definePlugin<AgentConfig>({
         }
       }
     });
+
+    void (async () => {
+      for (const project of ctx.store.projects.list()) {
+        for (const s of ctx.store.sessions.list({ projectId: project.id })) {
+          if (s.title !== null) continue;
+          try {
+            const first = ctx.store.messages
+              .list(s.id, { limit: 20 })
+              .find(({ message }) => message.role === "user");
+            const title = first ? titleFrom(textOf(first.parts)) : null;
+            if (title) await ctx.store.sessions.update(s.id, { title });
+          } catch {}
+        }
+      }
+    })().catch(() => {});
   },
 });
