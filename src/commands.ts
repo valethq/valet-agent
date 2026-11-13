@@ -1,4 +1,5 @@
 import type { Caller, Part } from "@valethq/sdk";
+import { compactWithValet } from "./compactions";
 import type { Env } from "./env";
 import { configFor, resolveModel } from "./model";
 import type { RunQueue } from "./queue";
@@ -52,8 +53,16 @@ const COMMANDS: Record<string, Command> = {
       : `New session: ${res.id}`;
   },
   async compact({ env, sessionId }) {
+    const { store } = env.ctx;
+    const session = store.sessions.get(sessionId);
+    if (!session) return "Unknown session.";
     try {
-      await env.ctx.scopes.get("context").compact({ sessionId, reason: "manual" });
+      const cand = resolveModel(session, store.projects.get(session.projectId), configFor(env.ctx));
+      const provider = env.ctx.scopes.maybe("inference", cand.provider);
+      if (!provider) return `Compaction failed: no inference provider "${cand.provider}".`;
+      if (provider.kind === "agent")
+        return `${provider.label} compacts its own context, so valet can't trigger it. Its compactions show here as they happen.`;
+      await compactWithValet(env, provider, cand.model, sessionId, "manual", env.ctx.signal);
       return "Compacted.";
     } catch (error) {
       return `Compaction failed: ${error instanceof Error ? error.message : String(error)}`;

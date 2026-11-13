@@ -1,5 +1,5 @@
 import type { AgentProvider, ModelInfo } from "@valethq/sdk";
-import { compactionNote, compactionNotices } from "./compactions";
+import { compactionNote, harnessCompactions } from "./compactions";
 import type { Env } from "./env";
 import type { ModelRef } from "./model";
 import type { Outcome, RunCtx } from "./run-types";
@@ -20,7 +20,7 @@ export async function runAgent(
         model: { id: info.id, contextWindow: info.contextWindow || undefined },
       })
     : undefined;
-  const compactions = compactionNotices(rc.store, rc.sessionId);
+  const compactions = harnessCompactions(rc.store, rc.sessionId);
   const note = compactions.length > entry.notedCompactions;
   const content = note ? [compactionNote(compactions), ...rc.content] : rc.content;
   if (note) entry.notedCompactions = compactions.length;
@@ -70,6 +70,14 @@ export async function runAgent(
         break;
       case "notice":
         rc.parts.notice(ev.level === "warning" ? "warn" : ev.level, ev.text);
+        break;
+      case "compaction":
+        // the harness compacted its own context; valet marks the chat and never compacts it
+        await ctx.scopes.get("context").compact({
+          sessionId: rc.sessionId,
+          reason: "auto",
+          by: { kind: "harness", label: provider.label },
+        });
         break;
       case "finish":
         if (ev.reason === "error") return { status: "error", error: ev.error ?? "agent error" };

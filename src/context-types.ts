@@ -27,12 +27,16 @@ export interface ContextManager {
     model: ModelInfo;
     lastUsage: { inputTokens?: number; contextTokens?: number };
   }): Promise<boolean>;
-  /** Writes a compaction-summary part. Older messages stay stored but leave the prompt window. */
-  compact(req: {
-    sessionId: string;
-    reason: "auto" | "manual" | "resume";
-  }): Promise<{ summaryPartId: string }>;
+  /**
+   * Records a `compaction` part in the same chat (never a new session). `by: valet` summarizes the
+   * chat since the last valet summary; `by: harness` writes a marker only.
+   */
+  compact(req: { sessionId: string; reason: "auto" | "manual"; by: CompactionBy }): Promise<void>;
 }
+
+export type CompactionBy =
+  | { kind: "valet"; summarize(transcript: string): Promise<string> }
+  | { kind: "harness"; label: string };
 
 declare module "@valethq/sdk" {
   interface ValetScopes {

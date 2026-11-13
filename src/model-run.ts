@@ -1,4 +1,5 @@
 import type { ModelContent, ModelInfo, ModelMessage, ModelProvider, ToolDefinition } from "@valethq/sdk";
+import { autoCompact } from "./compactions";
 import type { Env } from "./env";
 import type { ModelRef } from "./model";
 import type { Outcome, RunCtx } from "./run-types";
@@ -87,6 +88,7 @@ export async function runModel(
   const meta = { sessionId: rc.sessionId, runId: rc.runId };
   let inputTokens = 0;
   let outputTokens = 0;
+  let contextTokens = 0;
 
   for (let step = 0; step < MAX_STEPS; step++) {
     const calls: Call[] = [];
@@ -110,11 +112,8 @@ export async function runModel(
         case "usage":
           inputTokens += chunk.inputTokens;
           outputTokens += chunk.outputTokens;
-          rc.usage({
-            inputTokens,
-            outputTokens,
-            contextTokens: chunk.inputTokens + (chunk.cacheReadTokens ?? 0),
-          });
+          contextTokens = chunk.inputTokens + (chunk.cacheReadTokens ?? 0);
+          rc.usage({ inputTokens, outputTokens, contextTokens });
           break;
         case "finish":
           finish = chunk;
@@ -125,7 +124,10 @@ export async function runModel(
     if (finish?.reason !== "stop" && finish?.reason !== "tool-calls" && finish?.reason !== "length") {
       return { status: "error", error: finish?.error ?? "stream ended without a finish chunk" };
     }
-    if (calls.length === 0) return { status: "stop" };
+    if (calls.length === 0) {
+      await autoCompact(env, provider, info, rc, contextTokens);
+      return { status: "stop" };
+    }
     const content: ModelContent[] = [
       ...(text ? [{ type: "text" as const, text }] : []),
       ...calls.map((c) => ({ type: "tool-call" as const, ...c })),
