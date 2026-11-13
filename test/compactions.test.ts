@@ -83,6 +83,11 @@ describe("compaction note", () => {
     await run();
     expect(last()[0]?.text).toContain("Devin CLI, Claude Code compacted your context 2 time(s)");
     expect(entry.notedCompactions).toBe(2);
+
+    chat.push(compaction("Claude Code", "completed"), compaction("Claude Code", "completed"));
+    await run();
+    expect(last()[0]?.text).toContain("Devin CLI, Claude Code compacted your context 4 time(s)");
+    expect(last()[0]?.text).not.toContain("Claude Code, Claude Code");
   });
 
   test("start and end events open and close a compaction part during the turn", async () => {
@@ -141,7 +146,7 @@ describe("compactHarness", () => {
       },
     };
     const reply = await compactHarness(harness(session), provider, "m", "s", "/tmp", "keep the todo list");
-    expect(reply).toBe("Compacted.");
+    expect(reply).toBeUndefined();
     expect(chat[0]).toMatchObject({ status: "completed", by: "Fake agent" });
   });
 

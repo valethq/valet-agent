@@ -12,7 +12,8 @@ interface CommandCtx {
   arg: string;
   caller: Caller;
 }
-type Command = (c: CommandCtx) => Promise<string>;
+/** A reply is the command's text node; undefined means the command posts nothing (its work shows in the chat itself). */
+type Command = (c: CommandCtx) => Promise<string | undefined>;
 
 const isCancelled = (r: object): r is { cancelled: true; cancelReason?: string } => "cancelled" in r;
 
@@ -61,24 +62,38 @@ const COMMANDS: Record<string, Command> = {
     const cand = resolveModel(session, project, configFor(env.ctx));
     const provider = env.ctx.scopes.maybe("inference", cand.provider);
     if (!provider) return `Compaction failed: no inference provider "${cand.provider}".`;
-    try {
-      if (provider.kind === "model") {
-        await compactWithValet(env, provider, cand.model, sessionId, "manual", env.ctx.signal);
-        return "Compacted.";
-      }
-      return await compactHarness(
-        env,
-        provider,
-        cand.model,
-        sessionId,
-        project?.workspaceDir ?? env.ctx.paths.data,
-        arg === "" ? undefined : arg,
-      );
-    } catch (error) {
-      return `Compaction failed: ${error instanceof Error ? error.message : String(error)}`;
-    }
+    // Compaction runs after this returns: the send must not wait on it, or the client times out and resends.
+    const cwd = project?.workspaceDir ?? env.ctx.paths.data;
+    const instructions = arg === "" ? undefined : arg;
+    const job =
+      provider.kind === "model"
+        ? compactWithValet(env, provider, cand.model, sessionId, "manual", env.ctx.signal).then(
+            () => undefined,
+          )
+        : compactHarness(env, provider, cand.model, sessionId, cwd, instructions);
+    job.then(
+      (text) => {
+        if (text !== undefined) return postReply(env, sessionId, text);
+      },
+      (error: unknown) =>
+        postReply(
+          env,
+          sessionId,
+          `Compaction failed: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+    );
+    return undefined;
   },
 };
+
+function postReply(env: Env, sessionId: string, text: string): Promise<unknown> {
+  return env.ctx.store.messages.create({
+    sessionId,
+    role: "assistant",
+    origin: { platform: "system", conversationId: sessionId },
+    parts: [{ type: "text", text }],
+  });
+}
 
 const firstText = (parts: Part[]): string => {
   const first = parts[0]?.data;
@@ -97,16 +112,14 @@ export function registerCommands(env: Env, queue: RunQueue): void {
       const command = match && COMMANDS[(match[1] as string).toLowerCase()];
       if (!command || authorRole(ctx.store, message.authorPrincipalId, e.caller) !== "owner") return;
       try {
-        replies.set(
-          message.id,
-          await command({
-            env,
-            queue,
-            sessionId: message.sessionId,
-            arg: (match[2] ?? "").trim(),
-            caller: e.caller,
-          }),
-        );
+        const text = await command({
+          env,
+          queue,
+          sessionId: message.sessionId,
+          arg: (match[2] ?? "").trim(),
+          caller: e.caller,
+        });
+        if (text !== undefined) replies.set(message.id, text);
       } catch (error) {
         replies.set(message.id, `Command failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -120,11 +133,6 @@ export function registerCommands(env: Env, queue: RunQueue): void {
     if (text === undefined) return;
     replies.delete(e.payload.message.id);
     const { sessionId } = e.payload.message;
-    await ctx.store.messages.create({
-      sessionId,
-      role: "assistant",
-      origin: { platform: "system", conversationId: sessionId },
-      parts: [{ type: "text", text }],
-    });
+    await postReply(env, sessionId, text);
   });
 }

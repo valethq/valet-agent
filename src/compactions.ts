@@ -14,10 +14,12 @@ export function harnessCompactions(store: Store, sessionId: string): string[] {
   return by;
 }
 
+/** `by` holds one entry per completed compaction: names are deduped for the list, the count stays per compaction. */
 export function compactionNote(by: string[]): ModelContent {
+  const names = [...new Set(by)];
   return {
     type: "text",
-    text: `[valet: ${by.join(", ")} compacted your context ${by.length} time(s) in this chat. Turns before the latest compaction reach you only as its summary, so quote them from the summary with that caveat. This is still the same chat, not a new thread.]`,
+    text: `[valet: ${names.join(", ")} compacted your context ${by.length} time(s) in this chat. Turns before the latest compaction reach you only as its summary, so quote them from the summary with that caveat. This is still the same chat, not a new thread.]`,
   };
 }
 
@@ -117,7 +119,7 @@ export async function autoCompact(
   }
 }
 
-/** `/compact` on a harness session: the harness compacts its own context; valet only opens and closes the marker. */
+/** `/compact` on a harness session: the harness compacts its own context; valet only opens and closes the marker. Returns a reply only for a refusal or failure. */
 export async function compactHarness(
   env: Env,
   provider: AgentProvider,
@@ -125,7 +127,7 @@ export async function compactHarness(
   sessionId: string,
   cwd: string,
   instructions: string | undefined,
-): Promise<string> {
+): Promise<string | undefined> {
   const entry = await env.agents.acquire(provider, sessionId, cwd, model);
   const session = entry.session;
   if (!session.compact)
@@ -144,5 +146,6 @@ export async function compactHarness(
   }
   await recorder.end("failed", error ?? "the harness reported no compaction");
   if (error !== undefined) return `Compaction failed: ${error}`;
-  return completed ? "Compacted." : `Compaction failed: ${provider.label} reported no compaction.`;
+  // success is shown by the marker itself, so no reply text
+  return completed ? undefined : `Compaction failed: ${provider.label} reported no compaction.`;
 }
