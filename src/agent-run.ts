@@ -34,7 +34,18 @@ export async function runAgent(
         rc.parts.update(ev.callId, { outputDelta: ev.outputDelta, status: ev.status });
         break;
       case "tool-end":
-        rc.parts.end(ev.callId, ev.status, { output: ev.output });
+        rc.parts.end(ev.callId, ev.status, {
+          output: ev.output,
+          ...(typeof ev.exitCode === "number"
+            ? {
+                result: {
+                  content: [],
+                  isError: ev.status === "error",
+                  meta: { exitCode: ev.exitCode },
+                },
+              }
+            : {}),
+        });
         break;
       case "permission": {
         const { callId, title } = ev.request;
@@ -51,6 +62,9 @@ export async function runAgent(
       }
       case "usage":
         rc.usage(ev);
+        break;
+      case "notice":
+        rc.parts.notice(ev.level === "warning" ? "warn" : ev.level, ev.text);
         break;
       case "finish":
         if (ev.reason === "error") return { status: "error", error: ev.error ?? "agent error" };

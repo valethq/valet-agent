@@ -120,11 +120,18 @@ export class PartStream {
     const tool = this.#tools.get(callId);
     if (!tool) return;
     this.#tools.delete(callId);
+    const prev = tool.data.result;
     const data: ToolData = {
       ...tool.data,
       status,
       output: fin.output ?? tool.data.output,
-      result: fin.result,
+      result: fin.result
+        ? {
+            ...prev,
+            ...fin.result,
+            ...(prev?.meta || fin.result.meta ? { meta: { ...prev?.meta, ...fin.result.meta } } : {}),
+          }
+        : prev,
     };
     tool.writer.close(PART_STATUS[status], data);
   }

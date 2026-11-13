@@ -60,8 +60,13 @@ export default definePlugin({
                 yield { type: "tool-update", callId: "c1", outputDelta: "out", status: "running" };
                 yield { type: "tool-end", callId: "c1", status: "done" };
               }
+              if (text.startsWith("exit")) {
+                yield { type: "tool-start", callId: "c1", name: "shell", input: { cmd: "oops" } };
+                yield { type: "tool-end", callId: "c1", status: "error", output: "nope", exitCode: 3 };
+              }
               yield { type: "reasoning-delta", text: "think" };
               yield { type: "text-delta", text: "Hello, " };
+              if (text.startsWith("note")) yield { type: "notice", level: "warning", text: "heads up" };
               yield { type: "text-delta", text };
               yield { type: "usage", contextTokens: 100, inputTokens: 90, outputTokens: 10 };
               yield { type: "finish", reason: "stop" };

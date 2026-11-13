@@ -106,6 +106,29 @@ describe("agent kind", () => {
     });
   });
 
+  test("tool-end exitCode is stored in the tool part's result.meta", async () => {
+    const id = await newSession(agent());
+    await send(id, "exit now");
+    const [a] = await done(id, 1);
+    expect(a?.parts.map((p) => p.type)).toEqual(["tool-call", "reasoning", "text"]);
+    expect(a?.parts[0]?.data).toMatchObject({
+      callId: "c1",
+      name: "shell",
+      status: "error",
+      output: "nope",
+      result: { content: [], isError: true, meta: { exitCode: 3 } },
+    });
+  });
+
+  test("a notice event becomes a standalone notice part, ordered between text parts", async () => {
+    const id = await newSession(agent());
+    await send(id, "note me");
+    const [a] = await done(id, 1);
+    expect(a?.parts.map((p) => p.type)).toEqual(["reasoning", "text", "notice", "text"]);
+    expect(a?.parts[2]?.data).toMatchObject({ level: "warn", text: "heads up" });
+    expect(textOf(a as Entry)).toBe("Hello, note me");
+  });
+
   test("a second message queues, then runs after the first is cancelled", async () => {
     const id = await newSession(agent());
     await send(id, "slow first");
