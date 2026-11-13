@@ -33,9 +33,11 @@ async function attempt(
   cand: ModelRef,
   rc: RunCtx,
   contextWindow: { value?: number },
+  used: { value?: ModelRef },
 ): Promise<Outcome> {
   const provider = env.ctx.scopes.maybe("inference", cand.provider);
   if (!provider) return { status: "error", error: `no inference provider "${cand.provider}"` };
+  used.value = { provider: cand.provider, model: cand.model };
   rc.store.runs.update(rc.runId, { provider: cand.provider, model: cand.model });
   try {
     const models = await provider.listModels().catch(() => [] as ModelInfo[]);
@@ -72,22 +74,33 @@ export async function execute(env: Env, job: Job, active: Active): Promise<void>
   const run = store.runs.create({ sessionId: session.id, triggerMessageId: job.message.id, role: job.role });
   active.runId = run.id;
   store.runs.update(run.id, { status: "running" });
-  const created = await store.messages.create({
-    sessionId: session.id,
-    role: "assistant",
-    runId: run.id,
-    status: "streaming",
-    parts: [],
-  });
-  if ("cancelled" in created) {
-    store.runs.update(run.id, {
-      status: "error",
-      error: created.cancelReason ?? "assistant message was cancelled",
-    });
-    return;
-  }
 
-  const parts = new PartStream(store, created.message.id);
+  const used: { value?: ModelRef } = {};
+  let createError = "assistant message was cancelled";
+  const parts = new PartStream(store, () =>
+    store.messages
+      .create({
+        sessionId: session.id,
+        role: "assistant",
+        runId: run.id,
+        status: "streaming",
+        parts: [],
+        ...(used.value ? { meta: { model: used.value } } : {}),
+      })
+      .then(
+        (res) => {
+          if ("cancelled" in res) {
+            if (res.cancelReason) createError = res.cancelReason;
+            return undefined;
+          }
+          return res.message.id;
+        },
+        (error) => {
+          createError = errorText(error);
+          return undefined;
+        },
+      ),
+  );
   const signal = AbortSignal.any([ctx.signal, active.controller.signal]);
   const usage: Record<string, number> = {};
   const contextWindow: { value?: number } = {};
@@ -111,6 +124,7 @@ export async function execute(env: Env, job: Job, active: Active): Promise<void>
   };
 
   const setting = resolveModel(session, project, ctx.config);
+  const failures: { cand: ModelRef; error: string }[] = [];
   let outcome: Outcome = { status: "error", error: "no model candidates" };
   try {
     for (const cand of [setting, ...setting.fallbacks]) {
@@ -118,8 +132,9 @@ export async function execute(env: Env, job: Job, active: Active): Promise<void>
         outcome = { status: "cancelled" };
         break;
       }
-      outcome = await attempt(env, cand, rc, contextWindow);
+      outcome = await attempt(env, cand, rc, contextWindow, used);
       if (outcome.status !== "error" || parts.output) break;
+      failures.push({ cand, error: outcome.error });
       ctx.log.warn("model attempt failed, trying next fallback", { runId: run.id, error: outcome.error });
     }
   } catch (error) {
@@ -127,8 +142,20 @@ export async function execute(env: Env, job: Job, active: Active): Promise<void>
   }
 
   const ended = ctx.signal.aborted ? ENDINGS.interrupted : ENDINGS[outcome.status];
+  if (ended.message === "error" && !parts.output && outcome.status === "error") {
+    parts.notice("error", outcome.error);
+  } else if (ended.message === "complete" && failures.length > 0 && used.value) {
+    const failed = failures.map((f) => `${f.cand.provider}:${f.cand.model} failed: ${f.error}`).join("; ");
+    parts.notice("warn", `${failed}; used ${used.value.provider}:${used.value.model}`);
+  }
   parts.closeAll(ended.message);
-  await store.messages.complete(created.message.id, ended.message);
+  const messageId = await parts.finish();
+  if (messageId === undefined) {
+    if (store.runs.get(run.id)?.status === "running")
+      store.runs.update(run.id, { status: "error", error: createError });
+    return;
+  }
+  await store.messages.complete(messageId, ended.message);
   if (store.runs.get(run.id)?.status === "running") {
     store.runs.update(run.id, {
       status: ended.run,

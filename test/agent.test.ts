@@ -12,6 +12,7 @@ interface Entry {
     status: string;
     runId: string | null;
     origin: { platform: string } | null;
+    meta: Record<string, Json>;
   };
   parts: { type: string; status: string; data: Record<string, Json> }[];
 }
@@ -66,6 +67,7 @@ describe("agent kind", () => {
     expect(a?.parts.every((p) => p.status === "complete")).toBe(true);
     expect(textOf(a as Entry)).toBe("Hello, hi");
 
+    expect(a?.message.meta.model).toEqual({ provider: "fake-agent", model: "m1" });
     const run = (await k.api(`/api/core/runs/${a?.message.runId}`)).body;
     expect(run).toMatchObject({ status: "complete", provider: "fake-agent", model: "m1", role: "owner" });
 
@@ -194,6 +196,11 @@ describe("model kind and fallbacks", () => {
     const [a] = await done(id, 1);
     expect(a?.message.status).toBe("complete");
     expect(textOf(a as Entry)).toBe("Hello, hi");
+    expect(a?.parts.find((p) => p.type === "notice")?.data).toMatchObject({
+      level: "warn",
+      text: "fake-bad:x failed: boom; used fake-agent:m1",
+    });
+    expect(a?.message.meta.model).toEqual({ provider: "fake-agent", model: "m1" });
     expect((await k.api(`/api/core/runs/${a?.message.runId}`)).body).toMatchObject({
       status: "complete",
       provider: "fake-agent",
@@ -205,6 +212,9 @@ describe("model kind and fallbacks", () => {
     await send(id, "hi");
     const [a] = await done(id, 1);
     expect(a?.message.status).toBe("error");
+    expect(a?.parts.map((p) => p.type)).toEqual(["notice"]);
+    expect(a?.parts[0]?.data).toMatchObject({ level: "error", text: "boom" });
+    expect(a?.message.meta.model).toEqual({ provider: "fake-bad", model: "x" });
     expect((await k.api(`/api/core/runs/${a?.message.runId}`)).body).toMatchObject({
       status: "error",
       error: "boom",
