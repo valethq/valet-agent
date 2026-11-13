@@ -15,6 +15,7 @@ export default definePlugin<AgentConfig>({
     const env: Env = { ctx, agents: new AgentSessions(ctx), lastUsage: new Map() };
     const queue = new RunQueue(env);
     ctx.onDispose(() => env.agents.closeAll());
+    ctx.onConfigChange(() => {}); // config is read from ctx.config at use, so a reload needs no action
 
     registerCommands(env, queue);
     registerHttp(env, queue);
