@@ -6,6 +6,7 @@ export interface AgentEntry {
   model: string;
   session: AgentSession;
   needsPreamble: boolean;
+  notedCompactions: number;
 }
 
 /** One open AgentSession per valet session, kept for the life of the process. */
@@ -43,7 +44,13 @@ export class AgentSessions {
       signal: this.#ctx.signal,
     });
     this.#ctx.store.sessions.setProviderState(sessionId, provider.id, { resumeId: session.resumeId });
-    const entry = { providerId: provider.id, model, session, needsPreamble: session.resumeId !== resumeId };
+    const entry = {
+      providerId: provider.id,
+      model,
+      session,
+      needsPreamble: session.resumeId !== resumeId,
+      notedCompactions: 0,
+    };
     this.#entries.set(sessionId, entry);
     return entry;
   }

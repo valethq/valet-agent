@@ -1,4 +1,5 @@
 import type { AgentProvider, ModelInfo } from "@valethq/sdk";
+import { compactionNote, compactionNotices } from "./compactions";
 import type { Env } from "./env";
 import type { ModelRef } from "./model";
 import type { Outcome, RunCtx } from "./run-types";
@@ -19,7 +20,11 @@ export async function runAgent(
         model: { id: info.id, contextWindow: info.contextWindow || undefined },
       })
     : undefined;
-  const input = { content: rc.content, ...(preamble ? { preamble } : {}) };
+  const compactions = compactionNotices(rc.store, rc.sessionId);
+  const note = compactions.length > entry.notedCompactions;
+  const content = note ? [compactionNote(compactions), ...rc.content] : rc.content;
+  if (note) entry.notedCompactions = compactions.length;
+  const input = { content, ...(preamble ? { preamble } : {}) };
   for await (const ev of entry.session.prompt(input, rc.signal)) {
     entry.needsPreamble = false;
     switch (ev.type) {
