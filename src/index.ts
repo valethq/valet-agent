@@ -36,6 +36,12 @@ export default definePlugin<AgentConfig>({
       if (!e.cancelled) queue.abort(e.payload.runId);
     });
 
+    ctx.events.after("session.delete", (e) => {
+      if (e.cancelled) return;
+      queue.dropSession(e.payload.session.id);
+      void env.agents.drop(e.payload.session.id);
+    });
+
     ctx.events.after("run.interrupted", async ({ payload: { run } }) => {
       if (ctx.store.runs.get(run.id)?.status === "running")
         ctx.store.runs.update(run.id, { status: "interrupted" });
@@ -49,6 +55,8 @@ export default definePlugin<AgentConfig>({
     void (async () => {
       for (const project of ctx.store.projects.list()) {
         for (const s of ctx.store.sessions.list({ projectId: project.id })) {
+          if (s.status === "running")
+            await ctx.store.sessions.update(s.id, { status: "idle" }).catch(() => {});
           if (s.title !== null) continue;
           try {
             const first = ctx.store.messages

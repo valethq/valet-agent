@@ -41,6 +41,8 @@ const messages = async (sessionId: string): Promise<Entry[]> =>
   (await k.api(`/api/core/sessions/${sessionId}/messages`)).body;
 const assistants = async (sessionId: string) =>
   (await messages(sessionId)).filter((m) => m.message.role === "assistant");
+const sessionOf = async (sessionId: string): Promise<{ status: string }> =>
+  (await k.api(`/api/core/sessions/${sessionId}`)).body;
 const state = async (sessionId: string) =>
   (await k.api(`/plugins/valet-agent/sessions/${sessionId}/state`)).body;
 const log = async (): Promise<Record<string, Json>[]> =>
@@ -164,6 +166,28 @@ describe("agent kind", () => {
     expect(list[1]?.message.origin?.platform).toBe("system");
     expect((await k.api(`/api/core/runs/${runId}`)).body.status).toBe("cancelled");
     expect((await state(id)).activeRunId).toBeUndefined();
+  });
+
+  test("status is running while a run is active or queued, then idle", async () => {
+    const id = await newSession(agent());
+    await send(id, "slow first");
+    const first = await waitFor(async () => (await state(id)).activeRunId);
+    expect((await sessionOf(id)).status).toBe("running");
+    await send(id, "second");
+    await k.api(`/api/core/runs/${first}/cancel`, { method: "POST", body: {} });
+    await done(id, 2);
+    await waitFor(async () => (await sessionOf(id)).status === "idle");
+  });
+
+  test("deleting a session stops its run and drops its queue", async () => {
+    const id = await newSession(agent());
+    await send(id, "slow one");
+    await waitFor(async () => (await state(id)).activeRunId);
+    await send(id, "never runs");
+    expect((await k.api(`/api/core/sessions/${id}`, { method: "DELETE" })).status).toBe(200);
+    expect((await k.api(`/api/core/sessions/${id}`)).status).toBe(404);
+    await Bun.sleep(300);
+    expect((await log()).some((l) => l.op === "prompt" && l.text === "never runs")).toBe(false);
   });
 
   test("/model updates settings, cancels the message and setModel is called", async () => {
@@ -306,6 +330,7 @@ describe("restart", () => {
     await waitFor(
       async () => (await first.api(`/api/core/sessions/${session}/messages`)).body[1]?.parts.length > 0,
     );
+    expect((await first.api(`/api/core/sessions/${session}`)).body.status).toBe("running");
     await first.kill();
 
     const second = await startKernel(home);
@@ -315,6 +340,7 @@ describe("restart", () => {
       const a = list.find((m) => m.message.role === "assistant");
       expect(a?.message.status).toBe("interrupted");
       expect(a?.parts.map((p) => p.status)).toEqual(["interrupted"]);
+      await waitFor(async () => (await second.api(`/api/core/sessions/${session}`)).body.status === "idle");
     } finally {
       await second.stop();
     }

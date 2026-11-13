@@ -46,6 +46,13 @@ export class RunQueue {
     }
   }
 
+  dropSession(sessionId: string): void {
+    const queue = this.#queues.get(sessionId);
+    if (!queue) return;
+    queue.pending = [];
+    queue.active?.controller.abort();
+  }
+
   snapshot(sessionId: string): { activeRunId?: string; queued: number } {
     const queue = this.#queues.get(sessionId);
     return {
@@ -57,6 +64,7 @@ export class RunQueue {
   async #drain(sessionId: string, queue: SessionQueue): Promise<void> {
     if (queue.draining) return;
     queue.draining = true;
+    await this.#setStatus(sessionId, "running");
     try {
       for (let job = queue.pending.shift(); job; job = queue.pending.shift()) {
         queue.active = { controller: new AbortController() };
@@ -68,8 +76,18 @@ export class RunQueue {
         queue.active = undefined;
       }
     } finally {
+      if (queue.pending.length === 0) await this.#setStatus(sessionId, "idle");
       queue.draining = false;
       if (queue.pending.length === 0) this.#queues.delete(sessionId);
+      else void this.#drain(sessionId, queue);
     }
+  }
+
+  /** The session's status is owned by the agent: running while a run is active or queued. */
+  async #setStatus(sessionId: string, status: "running" | "idle"): Promise<void> {
+    const { store } = this.#env.ctx;
+    const session = store.sessions.get(sessionId);
+    if (session === undefined || session.status === "archived") return;
+    await store.sessions.update(sessionId, { status }).catch(() => {});
   }
 }
