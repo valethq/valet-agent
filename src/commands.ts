@@ -1,5 +1,5 @@
 import type { Caller, Part } from "@valethq/sdk";
-import { compactWithValet } from "./compactions";
+import { compactHarness, compactWithValet } from "./compactions";
 import type { Env } from "./env";
 import { configFor, resolveModel } from "./model";
 import type { RunQueue } from "./queue";
@@ -52,18 +52,28 @@ const COMMANDS: Record<string, Command> = {
       ? `Could not create a session: ${res.cancelReason ?? "cancelled"}.`
       : `New session: ${res.id}`;
   },
-  async compact({ env, sessionId }) {
+  async compact({ env, queue, sessionId, arg }) {
     const { store } = env.ctx;
     const session = store.sessions.get(sessionId);
     if (!session) return "Unknown session.";
+    if (queue.snapshot(sessionId).activeRunId) return "A turn is running. Compact once it finishes.";
+    const project = store.projects.get(session.projectId);
+    const cand = resolveModel(session, project, configFor(env.ctx));
+    const provider = env.ctx.scopes.maybe("inference", cand.provider);
+    if (!provider) return `Compaction failed: no inference provider "${cand.provider}".`;
     try {
-      const cand = resolveModel(session, store.projects.get(session.projectId), configFor(env.ctx));
-      const provider = env.ctx.scopes.maybe("inference", cand.provider);
-      if (!provider) return `Compaction failed: no inference provider "${cand.provider}".`;
-      if (provider.kind === "agent")
-        return `${provider.label} compacts its own context, so valet can't trigger it. Its compactions show here as they happen.`;
-      await compactWithValet(env, provider, cand.model, sessionId, "manual", env.ctx.signal);
-      return "Compacted.";
+      if (provider.kind === "model") {
+        await compactWithValet(env, provider, cand.model, sessionId, "manual", env.ctx.signal);
+        return "Compacted.";
+      }
+      return await compactHarness(
+        env,
+        provider,
+        cand.model,
+        sessionId,
+        project?.workspaceDir ?? env.ctx.paths.data,
+        arg === "" ? undefined : arg,
+      );
     } catch (error) {
       return `Compaction failed: ${error instanceof Error ? error.message : String(error)}`;
     }

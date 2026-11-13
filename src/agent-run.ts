@@ -1,5 +1,5 @@
 import type { AgentProvider, ModelInfo } from "@valethq/sdk";
-import { compactionNote, harnessCompactions } from "./compactions";
+import { CompactionRecorder, compactionNote, harnessCompactions } from "./compactions";
 import type { Env } from "./env";
 import type { ModelRef } from "./model";
 import type { Outcome, RunCtx } from "./run-types";
@@ -25,6 +25,7 @@ export async function runAgent(
   const content = note ? [compactionNote(compactions), ...rc.content] : rc.content;
   if (note) entry.notedCompactions = compactions.length;
   const input = { content, ...(preamble ? { preamble } : {}) };
+  const recorder = new CompactionRecorder(ctx, rc.sessionId, provider.label);
   for await (const ev of entry.session.prompt(input, rc.signal)) {
     entry.needsPreamble = false;
     switch (ev.type) {
@@ -71,18 +72,25 @@ export async function runAgent(
       case "notice":
         rc.parts.notice(ev.level === "warning" ? "warn" : ev.level, ev.text);
         break;
-      case "compaction":
-        // the harness compacted its own context; valet marks the chat and never compacts it
-        await ctx.scopes.get("context").compact({
-          sessionId: rc.sessionId,
-          reason: "auto",
-          by: { kind: "harness", label: provider.label },
-        });
+      case "compaction-start":
+        // the harness compacts its own context; valet only marks it in the chat
+        await recorder.start();
+        break;
+      case "compaction-end":
+        await recorder.end(ev.status, ev.error);
         break;
       case "finish":
+        await recorder.end(
+          ev.reason === "cancelled" ? "cancelled" : "failed",
+          "the turn ended before the compaction finished",
+        );
         if (ev.reason === "error") return { status: "error", error: ev.error ?? "agent error" };
         return ev.reason === "cancelled" ? { status: "cancelled" } : { status: "stop" };
     }
   }
+  await recorder.end(
+    rc.signal.aborted ? "cancelled" : "failed",
+    "the turn ended before the compaction finished",
+  );
   return rc.signal.aborted ? { status: "cancelled" } : { status: "stop" };
 }

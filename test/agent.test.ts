@@ -219,9 +219,7 @@ describe("agent kind", () => {
       return l.length === 2 && l;
     });
     const texts = list.map(textOf);
-    expect(
-      texts.find((t) => t.startsWith("Fake agent compacts its own context, so valet can't trigger it.")),
-    ).toBeDefined();
+    expect(texts.find((t) => t.startsWith("Fake agent can't be asked to compact."))).toBeDefined();
     const created = texts.find((t) => t.startsWith("New session: "))?.slice("New session: ".length) as string;
     const session = (await k.api(`/api/core/sessions/${created}`)).body;
     expect(session).toMatchObject({ projectId, settings: { ...agent(), custom: 1 } });

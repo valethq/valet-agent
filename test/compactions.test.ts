@@ -2,14 +2,28 @@ import { describe, expect, test } from "bun:test";
 import type { AgentEvent, AgentProvider, ModelInfo, ModelProvider, PartData } from "@valethq/sdk";
 import { runAgent } from "../src/agent-run";
 import type { AgentEntry } from "../src/agents";
-import { autoCompact, compactWithValet } from "../src/compactions";
+import { autoCompact, compactHarness, compactWithValet, CompactionRecorder } from "../src/compactions";
 import type { Env } from "../src/env";
 import type { RunCtx } from "../src/run-types";
 
 const chat: PartData[] = [];
 const prompts: { type: string; text?: string }[][] = [];
-const events: AgentEvent[] = [{ type: "finish", reason: "stop" }];
-const compacts: Record<string, unknown>[] = [];
+let events: AgentEvent[] = [{ type: "finish", reason: "stop" }];
+const contextCalls: { op: string; req: Record<string, unknown> }[] = [];
+
+const context = {
+  compactionStart: async (req: { by: string }) => {
+    contextCalls.push({ op: "start", req });
+    chat.push({ type: "compaction", by: req.by, status: "in_progress", coversThroughSeq: 0 });
+    return { compactionId: `c${contextCalls.length}` };
+  },
+  compactionEnd: async (req: { status: "completed" | "failed" | "cancelled"; error?: string }) => {
+    contextCalls.push({ op: "end", req });
+    const open = chat.findLast((p) => p.type === "compaction" && p.status === "in_progress");
+    if (open?.type === "compaction")
+      Object.assign(open, { status: req.status, ...(req.error ? { error: req.error } : {}) });
+  },
+};
 
 const entry = {
   providerId: "p",
@@ -25,16 +39,7 @@ const entry = {
 } as unknown as AgentEntry;
 
 const env = {
-  ctx: {
-    scopes: {
-      get: () => ({
-        compact: async (req: { by: { kind: string; label?: string } }) => {
-          compacts.push(req);
-          chat.push({ type: "compaction", by: req.by.label ?? "valet", coversThroughSeq: 0 });
-        },
-      }),
-    },
-  },
+  ctx: { scopes: { get: () => context } },
   agents: { acquire: async () => entry },
 } as unknown as Env;
 const store = {
@@ -50,16 +55,20 @@ const rc = {
 const provider = { id: "p", label: "Fake agent" } as AgentProvider;
 const run = () => runAgent(env, provider, { provider: "p", model: "m" }, rc, { id: "m" } as ModelInfo);
 const last = () => prompts[prompts.length - 1] ?? [];
-const harness = (by: string): PartData => ({ type: "compaction", by, coversThroughSeq: 0 });
+const compaction = (by: string, status: "in_progress" | "completed" | "failed" | "cancelled"): PartData => ({
+  type: "compaction",
+  by,
+  status,
+  coversThroughSeq: 0,
+});
 
 describe("compaction note", () => {
-  test("prepended once for harness compactions, repeated only for new ones", async () => {
-    chat.push(harness("Devin CLI"), {
-      type: "compaction",
-      by: "valet",
-      coversThroughSeq: 0,
-      summary: "earlier",
-    });
+  test("prepended once for completed harness compactions, repeated only for new ones", async () => {
+    chat.push(
+      compaction("Devin CLI", "completed"),
+      { type: "compaction", by: "valet", status: "completed", coversThroughSeq: 0, summary: "earlier" },
+      compaction("Claude Code", "in_progress"),
+    );
     await run();
     expect(last()).toHaveLength(2);
     expect(last()[0]?.text).toBe(
@@ -70,24 +79,89 @@ describe("compaction note", () => {
     await run();
     expect(last()).toEqual([{ type: "text", text: "hi" }]);
 
-    chat.push(harness("Claude Code"));
+    chat.push(compaction("Claude Code", "completed"));
     await run();
     expect(last()[0]?.text).toContain("Devin CLI, Claude Code compacted your context 2 time(s)");
     expect(entry.notedCompactions).toBe(2);
   });
 
-  test("a compaction event marks the chat and is reported on the next turn", async () => {
-    events.unshift({ type: "compaction" });
+  test("start and end events open and close a compaction part during the turn", async () => {
+    chat.length = 0;
+    events = [
+      { type: "compaction-start" },
+      { type: "compaction-end", status: "completed" },
+      { type: "finish", reason: "stop" },
+    ];
     await run();
-    expect(last()[0]?.text).toBe("hi");
-    expect(compacts.at(-1)).toEqual({
-      sessionId: "s",
-      reason: "auto",
-      by: { kind: "harness", label: "Fake agent" },
+    events = [{ type: "finish", reason: "stop" }];
+    expect(contextCalls.map((c) => c.op)).toEqual(["start", "end"]);
+    expect(contextCalls[0]?.req).toEqual({ sessionId: "s", by: "Fake agent" });
+    expect(chat[0]).toMatchObject({ status: "completed", by: "Fake agent" });
+  });
+
+  test("a turn that ends mid-compaction closes the part as failed", async () => {
+    chat.length = 0;
+    events = [{ type: "compaction-start" }, { type: "finish", reason: "stop" }];
+    await run();
+    events = [{ type: "finish", reason: "stop" }];
+    expect(chat[0]).toMatchObject({
+      status: "failed",
+      error: "the turn ended before the compaction finished",
     });
-    events.shift();
-    await run();
-    expect(last()[0]?.text).toContain("3 time(s)");
+  });
+});
+
+describe("recorder", () => {
+  test("end without an open part does nothing; start is idempotent", async () => {
+    chat.length = 0;
+    contextCalls.length = 0;
+    const recorder = new CompactionRecorder(env.ctx, "s", "Claude Code");
+    await recorder.end("completed");
+    expect(contextCalls).toEqual([]);
+    await recorder.start();
+    await recorder.start();
+    expect(contextCalls.filter((c) => c.op === "start")).toHaveLength(1);
+    await recorder.end("completed");
+    expect(recorder.open).toBe(false);
+  });
+});
+
+describe("compactHarness", () => {
+  const harness = (session: unknown) =>
+    ({ ...env, agents: { acquire: async () => ({ session }) } }) as unknown as Env;
+
+  test("/compact on a harness reports completed when the harness reports it", async () => {
+    chat.length = 0;
+    const session = {
+      async *compact(instructions: string | undefined) {
+        expect(instructions).toBe("keep the todo list");
+        yield { type: "compaction-start" };
+        yield { type: "compaction-end", status: "completed" };
+        yield { type: "finish", reason: "stop" };
+      },
+    };
+    const reply = await compactHarness(harness(session), provider, "m", "s", "/tmp", "keep the todo list");
+    expect(reply).toBe("Compacted.");
+    expect(chat[0]).toMatchObject({ status: "completed", by: "Fake agent" });
+  });
+
+  test("a harness without compact gets a plain refusal, no marker", async () => {
+    chat.length = 0;
+    const reply = await compactHarness(harness({}), provider, "m", "s", "/tmp", undefined);
+    expect(reply).toBe("Fake agent can't be asked to compact. It compacts on its own when it needs to.");
+    expect(chat).toEqual([]);
+  });
+
+  test("a harness error closes the marker as failed and says why", async () => {
+    chat.length = 0;
+    const session = {
+      async *compact() {
+        yield { type: "finish", reason: "error", error: "no such command" };
+      },
+    };
+    const reply = await compactHarness(harness(session), provider, "m", "s", "/tmp", undefined);
+    expect(reply).toBe("Compaction failed: no such command");
+    expect(chat[0]).toMatchObject({ status: "failed", error: "no such command" });
   });
 });
 
@@ -108,8 +182,8 @@ describe("valet compaction", () => {
       ctx: {
         scopes: {
           get: () => ({
-            compact: async (req: { by: { summarize(t: string): Promise<string> } }) =>
-              summaries.push(await req.by.summarize("TRANSCRIPT")),
+            compact: async (req: { summarize(t: string): Promise<string> }) =>
+              summaries.push(await req.summarize("TRANSCRIPT")),
           }),
         },
       },

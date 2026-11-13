@@ -1,15 +1,16 @@
-import type { ModelContent, ModelInfo, ModelProvider, Store } from "@valethq/sdk";
+import type { AgentProvider, ModelContent, ModelInfo, ModelProvider, Store } from "@valethq/sdk";
 import type { Env } from "./env";
 import type { RunCtx } from "./run-types";
 
 const SUMMARY_SYSTEM =
   "Summarize this chat so the assistant can carry on in it later. Keep decisions, open tasks, file paths, names and numbers. Reply with the summary only.";
 
-/** Compactions a harness made in this chat. valet's own summaries don't touch a harness's context. */
+/** Completed compactions a harness made in this chat. valet's own summaries don't touch a harness's context. */
 export function harnessCompactions(store: Store, sessionId: string): string[] {
   const by: string[] = [];
   for (const { parts } of store.messages.list(sessionId))
-    for (const { data } of parts) if (data.type === "compaction" && data.by !== "valet") by.push(data.by);
+    for (const { data } of parts)
+      if (data.type === "compaction" && data.status === "completed" && data.by !== "valet") by.push(data.by);
   return by;
 }
 
@@ -18,6 +19,41 @@ export function compactionNote(by: string[]): ModelContent {
     type: "text",
     text: `[valet: ${by.join(", ")} compacted your context ${by.length} time(s) in this chat. Turns before the latest compaction reach you only as its summary, so quote them from the summary with that caveat. This is still the same chat, not a new thread.]`,
   };
+}
+
+/** One compaction part per harness compaction. Ending a part that isn't open is a no-op, so a harness's own end event can close it first. */
+export class CompactionRecorder {
+  #id?: string;
+
+  constructor(
+    private readonly ctx: Env["ctx"],
+    private readonly sessionId: string,
+    private readonly by: string,
+  ) {}
+
+  get open(): boolean {
+    return this.#id !== undefined;
+  }
+
+  async start(): Promise<void> {
+    if (this.#id !== undefined) return;
+    const { compactionId } = await this.ctx.scopes
+      .get("context")
+      .compactionStart({ sessionId: this.sessionId, by: this.by });
+    this.#id = compactionId;
+  }
+
+  async end(status: "completed" | "failed" | "cancelled", error?: string): Promise<void> {
+    const compactionId = this.#id;
+    if (compactionId === undefined) return;
+    this.#id = undefined;
+    await this.ctx.scopes.get("context").compactionEnd({
+      sessionId: this.sessionId,
+      compactionId,
+      status,
+      ...(error === undefined ? {} : { error }),
+    });
+  }
 }
 
 async function summarize(
@@ -55,10 +91,7 @@ export function compactWithValet(
   return env.ctx.scopes.get("context").compact({
     sessionId,
     reason,
-    by: {
-      kind: "valet",
-      summarize: (transcript) => summarize(provider, model, sessionId, transcript, signal),
-    },
+    summarize: (transcript) => summarize(provider, model, sessionId, transcript, signal),
   });
 }
 
@@ -82,4 +115,34 @@ export async function autoCompact(
       `Auto-compaction failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+}
+
+/** `/compact` on a harness session: the harness compacts its own context; valet only opens and closes the marker. */
+export async function compactHarness(
+  env: Env,
+  provider: AgentProvider,
+  model: string,
+  sessionId: string,
+  cwd: string,
+  instructions: string | undefined,
+): Promise<string> {
+  const entry = await env.agents.acquire(provider, sessionId, cwd, model);
+  const session = entry.session;
+  if (!session.compact)
+    return `${provider.label} can't be asked to compact. It compacts on its own when it needs to.`;
+  const recorder = new CompactionRecorder(env.ctx, sessionId, provider.label);
+  await recorder.start();
+  let completed = false;
+  let error: string | undefined;
+  for await (const ev of session.compact(instructions, env.ctx.signal)) {
+    if (ev.type === "compaction-start") await recorder.start();
+    if (ev.type === "compaction-end") {
+      completed ||= ev.status === "completed";
+      await recorder.end(ev.status, ev.error);
+    }
+    if (ev.type === "finish" && ev.reason === "error") error = ev.error ?? "compaction failed";
+  }
+  await recorder.end("failed", error ?? "the harness reported no compaction");
+  if (error !== undefined) return `Compaction failed: ${error}`;
+  return completed ? "Compacted." : `Compaction failed: ${provider.label} reported no compaction.`;
 }
