@@ -1,6 +1,6 @@
 import type { Caller, Part } from "@valethq/sdk";
 import type { Env } from "./env";
-import { resolveModel } from "./model";
+import { configFor, resolveModel } from "./model";
 import type { RunQueue } from "./queue";
 import { authorRole } from "./role";
 
@@ -20,7 +20,7 @@ const COMMANDS: Record<string, Command> = {
     const { store } = env.ctx;
     const session = store.sessions.get(sessionId);
     if (!session) return "Unknown session.";
-    const current = resolveModel(session, store.projects.get(session.projectId), env.ctx.config);
+    const current = resolveModel(session, store.projects.get(session.projectId), configFor(env.ctx));
     if (!arg) return `Current model: ${current.provider}:${current.model}.`;
     const sep = arg.indexOf(":");
     const explicit = sep > 0 && env.ctx.scopes.maybe("inference", arg.slice(0, sep)) !== undefined;

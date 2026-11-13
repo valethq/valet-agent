@@ -1,4 +1,4 @@
-import type { Project, Session } from "@valethq/sdk";
+import type { PluginContext, Project, Session } from "@valethq/sdk";
 
 export interface ModelRef {
   provider: string;
@@ -12,6 +12,14 @@ export interface AgentConfig {
 }
 
 export const DEFAULT_MODEL: ModelRef = { provider: "devin-cli", model: "claude-opus-5-5-medium" };
+
+/** Config with the settings-panel override applied; kv wins over config.json. */
+export function configFor(ctx: PluginContext<AgentConfig>): AgentConfig {
+  const m = ctx.storage.kv.get<ModelRef>("defaultModel");
+  return isModelRef(m)
+    ? { ...ctx.config, defaultModel: { provider: m.provider, model: m.model } }
+    : ctx.config;
+}
 
 export const isModelRef = (v: unknown): v is ModelRef & { fallbacks?: unknown } =>
   typeof v === "object" &&

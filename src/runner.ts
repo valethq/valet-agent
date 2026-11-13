@@ -2,7 +2,7 @@ import type { Message, ModelInfo, Part, Role, Run } from "@valethq/sdk";
 import { runAgent } from "./agent-run";
 import { toContent } from "./content";
 import type { Env } from "./env";
-import { type ModelRef, resolveModel } from "./model";
+import { configFor, type ModelRef, resolveModel } from "./model";
 import { runModel } from "./model-run";
 import { PartStream } from "./parts";
 import type { Outcome, RunCtx } from "./run-types";
@@ -123,7 +123,7 @@ export async function execute(env: Env, job: Job, active: Active): Promise<void>
     },
   };
 
-  const setting = resolveModel(session, project, ctx.config);
+  const setting = resolveModel(session, project, configFor(ctx));
   const failures: { cand: ModelRef; error: string }[] = [];
   let outcome: Outcome = { status: "error", error: "no model candidates" };
   try {
