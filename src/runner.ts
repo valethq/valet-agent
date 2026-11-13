@@ -52,7 +52,7 @@ async function attempt(
     contextWindow.value = info.contextWindow || undefined;
     const outcome =
       provider.kind === "agent"
-        ? await runAgent(env, provider, cand, rc)
+        ? await runAgent(env, provider, cand, rc, info)
         : await runModel(env, provider, cand, rc, info);
     if (outcome.status === "error" && provider.kind === "agent") await env.agents.drop(rc.sessionId);
     return outcome;

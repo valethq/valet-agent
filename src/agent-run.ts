@@ -1,4 +1,4 @@
-import type { AgentProvider } from "@valethq/sdk";
+import type { AgentProvider, ModelInfo } from "@valethq/sdk";
 import type { Env } from "./env";
 import type { ModelRef } from "./model";
 import type { Outcome, RunCtx } from "./run-types";
@@ -8,11 +8,16 @@ export async function runAgent(
   provider: AgentProvider,
   cand: ModelRef,
   rc: RunCtx,
+  info: ModelInfo,
 ): Promise<Outcome> {
   const { ctx } = env;
   const entry = await env.agents.acquire(provider, rc.sessionId, rc.cwd, cand.model);
   const preamble = entry.needsPreamble
-    ? await ctx.scopes.get("context").preamble({ sessionId: rc.sessionId, role: rc.role })
+    ? await ctx.scopes.get("context").preamble({
+        sessionId: rc.sessionId,
+        role: rc.role,
+        model: { id: info.id, contextWindow: info.contextWindow || undefined },
+      })
     : undefined;
   const input = { content: rc.content, ...(preamble ? { preamble } : {}) };
   for await (const ev of entry.session.prompt(input, rc.signal)) {

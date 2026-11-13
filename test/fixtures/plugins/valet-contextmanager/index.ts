@@ -3,6 +3,8 @@ import { definePlugin, defineScope, type ModelMessage } from "@valethq/sdk";
 export default definePlugin({
   activate(ctx) {
     ctx.scopes.define(defineScope({ name: "context", version: 1, cardinality: "one" }));
+    const log: Record<string, unknown>[] = [];
+    ctx.http.route("GET", "/log", () => Response.json(log), { public: true });
     const impl = {
       async build(req: { sessionId: string }) {
         const messages: ModelMessage[] = [];
@@ -14,7 +16,8 @@ export default definePlugin({
         }
         return { system: "fixture system", messages, estimatedTokens: 0, files: [] };
       },
-      async preamble() {
+      async preamble(req: unknown) {
+        log.push(req as Record<string, unknown>);
         return "PREAMBLE";
       },
       async shouldCompact() {

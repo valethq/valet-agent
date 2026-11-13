@@ -45,6 +45,8 @@ const state = async (sessionId: string) =>
   (await k.api(`/plugins/valet-agent/sessions/${sessionId}/state`)).body;
 const log = async (): Promise<Record<string, Json>[]> =>
   (await fetch(`${k.base}/plugins/valet-fixture-inference/log`)).json() as Promise<Record<string, Json>[]>;
+const contextLog = async (): Promise<Record<string, Json>[]> =>
+  (await fetch(`${k.base}/plugins/valet-contextmanager/log`)).json() as Promise<Record<string, Json>[]>;
 const textOf = (e: Entry) =>
   e.parts
     .filter((p) => p.type === "text")
@@ -82,6 +84,12 @@ describe("agent kind", () => {
     await done(id, 2);
     const prompts = (await log()).filter((l) => l.op === "prompt" && /^(hi|again)$/.test(l.text));
     expect(prompts.map((p) => p.preamble)).toEqual(["PREAMBLE", null]);
+
+    expect(await contextLog()).toContainEqual({
+      sessionId: id,
+      role: "owner",
+      model: { id: "m1", contextWindow: 1000 },
+    });
   });
 
   test("tool events become one tool-call part updated in place", async () => {
