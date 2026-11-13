@@ -1,0 +1,56 @@
+import type { AgentProvider } from "@valethq/sdk";
+import type { Env } from "./env";
+import type { ModelRef } from "./model";
+import type { Outcome, RunCtx } from "./run-types";
+
+export async function runAgent(
+  env: Env,
+  provider: AgentProvider,
+  cand: ModelRef,
+  rc: RunCtx,
+): Promise<Outcome> {
+  const { ctx } = env;
+  const entry = await env.agents.acquire(provider, rc.sessionId, rc.cwd, cand.model);
+  const preamble = entry.needsPreamble
+    ? await ctx.scopes.get("context").preamble({ sessionId: rc.sessionId, role: rc.role })
+    : undefined;
+  const input = { content: rc.content, ...(preamble ? { preamble } : {}) };
+  for await (const ev of entry.session.prompt(input, rc.signal)) {
+    entry.needsPreamble = false;
+    switch (ev.type) {
+      case "text-delta":
+      case "reasoning-delta":
+        rc.parts.text(ev.type === "text-delta" ? "text" : "reasoning", ev.text);
+        break;
+      case "tool-start":
+        rc.parts.start({ ...ev, status: "running" });
+        break;
+      case "tool-update":
+        rc.parts.update(ev.callId, { outputDelta: ev.outputDelta, status: ev.status });
+        break;
+      case "tool-end":
+        rc.parts.end(ev.callId, ev.status, { output: ev.output });
+        break;
+      case "permission": {
+        const { callId, title } = ev.request;
+        const gate = await ctx.events.emit("tool.call", {
+          runId: rc.runId,
+          callId,
+          name: title,
+          input: { title },
+          role: rc.role,
+        });
+        ev.respond(!gate.cancelled);
+        if (gate.cancelled) rc.parts.update(callId, { status: "denied" });
+        break;
+      }
+      case "usage":
+        rc.usage(ev);
+        break;
+      case "finish":
+        if (ev.reason === "error") return { status: "error", error: ev.error ?? "agent error" };
+        return ev.reason === "cancelled" ? { status: "cancelled" } : { status: "stop" };
+    }
+  }
+  return rc.signal.aborted ? { status: "cancelled" } : { status: "stop" };
+}

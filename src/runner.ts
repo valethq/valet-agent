@@ -1,0 +1,138 @@
+import type { Message, ModelInfo, Part, Role, Run } from "@valethq/sdk";
+import { runAgent } from "./agent-run";
+import { toContent } from "./content";
+import type { Env } from "./env";
+import { type ModelRef, resolveModel } from "./model";
+import { runModel } from "./model-run";
+import { PartStream } from "./parts";
+import type { Outcome, RunCtx } from "./run-types";
+
+export interface Job {
+  sessionId: string;
+  message: Message;
+  parts: Part[];
+  role: Role;
+}
+export interface Active {
+  controller: AbortController;
+  runId?: string;
+}
+
+type Ending = { message: "complete" | "error" | "interrupted"; run: Run["status"] };
+const ENDINGS: Record<Outcome["status"] | "interrupted", Ending> = {
+  stop: { message: "complete", run: "complete" },
+  cancelled: { message: "interrupted", run: "cancelled" },
+  error: { message: "error", run: "error" },
+  interrupted: { message: "interrupted", run: "interrupted" },
+};
+
+const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+async function attempt(
+  env: Env,
+  cand: ModelRef,
+  rc: RunCtx,
+  contextWindow: { value?: number },
+): Promise<Outcome> {
+  const provider = env.ctx.scopes.maybe("inference", cand.provider);
+  if (!provider) return { status: "error", error: `no inference provider "${cand.provider}"` };
+  rc.store.runs.update(rc.runId, { provider: cand.provider, model: cand.model });
+  try {
+    const models = await provider.listModels().catch(() => [] as ModelInfo[]);
+    const info = models.find((m) => m.id === cand.model) ?? {
+      id: cand.model,
+      name: cand.model,
+      contextWindow: 0,
+      maxOutputTokens: 0,
+      input: ["text" as const],
+      reasoning: false,
+    };
+    contextWindow.value = info.contextWindow || undefined;
+    const outcome =
+      provider.kind === "agent"
+        ? await runAgent(env, provider, cand, rc)
+        : await runModel(env, provider, cand, rc, info);
+    if (outcome.status === "error" && provider.kind === "agent") await env.agents.drop(rc.sessionId);
+    return outcome;
+  } catch (error) {
+    if (provider.kind === "agent") await env.agents.drop(rc.sessionId);
+    return rc.signal.aborted ? { status: "cancelled" } : { status: "error", error: errorText(error) };
+  }
+}
+
+export async function execute(env: Env, job: Job, active: Active): Promise<void> {
+  const { ctx } = env;
+  const session = ctx.store.sessions.get(job.sessionId);
+  if (!session) return;
+  const project = ctx.store.projects.get(session.projectId);
+  const author = job.message.authorPrincipalId;
+  const store =
+    author && ctx.store.principals.get(author) ? ctx.store.as({ principalId: author }) : ctx.store;
+
+  const run = store.runs.create({ sessionId: session.id, triggerMessageId: job.message.id, role: job.role });
+  active.runId = run.id;
+  store.runs.update(run.id, { status: "running" });
+  const created = await store.messages.create({
+    sessionId: session.id,
+    role: "assistant",
+    runId: run.id,
+    status: "streaming",
+    parts: [],
+  });
+  if ("cancelled" in created) {
+    store.runs.update(run.id, {
+      status: "error",
+      error: created.cancelReason ?? "assistant message was cancelled",
+    });
+    return;
+  }
+
+  const parts = new PartStream(store, created.message.id);
+  const signal = AbortSignal.any([ctx.signal, active.controller.signal]);
+  const usage: Record<string, number> = {};
+  const contextWindow: { value?: number } = {};
+  const rc: RunCtx = {
+    sessionId: session.id,
+    projectId: session.projectId,
+    cwd: project?.workspaceDir ?? ctx.paths.data,
+    runId: run.id,
+    role: job.role,
+    caller: { plugin: ctx.plugin.id, ...(author ? { actor: { principalId: author, role: job.role } } : {}) },
+    content: toContent(job.parts),
+    parts,
+    signal,
+    store,
+    usage(u) {
+      for (const [k, v] of Object.entries(u)) if (typeof v === "number") usage[k] = v;
+      if (contextWindow.value) usage.contextWindow = contextWindow.value;
+      env.lastUsage.set(session.id, usage);
+      store.runs.update(run.id, { usage });
+    },
+  };
+
+  const setting = resolveModel(session, project, ctx.config);
+  let outcome: Outcome = { status: "error", error: "no model candidates" };
+  try {
+    for (const cand of [setting, ...setting.fallbacks]) {
+      if (signal.aborted) {
+        outcome = { status: "cancelled" };
+        break;
+      }
+      outcome = await attempt(env, cand, rc, contextWindow);
+      if (outcome.status !== "error" || parts.output) break;
+      ctx.log.warn("model attempt failed, trying next fallback", { runId: run.id, error: outcome.error });
+    }
+  } catch (error) {
+    outcome = { status: "error", error: errorText(error) };
+  }
+
+  const ended = ctx.signal.aborted ? ENDINGS.interrupted : ENDINGS[outcome.status];
+  parts.closeAll(ended.message);
+  await store.messages.complete(created.message.id, ended.message);
+  if (store.runs.get(run.id)?.status === "running") {
+    store.runs.update(run.id, {
+      status: ended.run,
+      ...(outcome.status === "error" ? { error: outcome.error } : {}),
+    });
+  }
+}

@@ -9,11 +9,6 @@
   "dependencies": {
     "valet-contextmanager": "^0.1.0"
   },
-  "requires": [
-    "inference",
-    "context"
-  ],
-  "optionalRequires": [
-    "tools"
-  ]
+  "requires": ["inference@1", "context@1"],
+  "optionalRequires": ["tools@1"]
 }
