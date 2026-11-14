@@ -2,7 +2,13 @@ import { expect, test } from "bun:test";
 import type { PluginContext } from "@valethq/sdk";
 import type { AgentConfig } from "../src/model";
 import { configFor } from "../src/model";
-import { defaultQueueMode, registerSettings, type SettingsPanel } from "../src/settings";
+import {
+  defaultQueueMode,
+  presentConfined,
+  presentRoots,
+  registerSettings,
+  type SettingsPanel,
+} from "../src/settings";
 
 function kvCtx(config: AgentConfig = {}) {
   const kv = new Map<string, unknown>();
@@ -51,7 +57,13 @@ test("panel get/set round-trips and validates", async () => {
   registerSettings(ctx);
   const p = panels[0];
   expect(p?.key).toBe("valet-agent");
-  expect(await p?.impl.get()).toEqual({ defaultQueueMode: "", defaultProvider: "", defaultModel: "" });
+  expect(await p?.impl.get()).toEqual({
+    defaultQueueMode: "",
+    defaultProvider: "",
+    defaultModel: "",
+    presentConfine: true,
+    presentRoots: [],
+  });
   await p?.impl.set({ defaultQueueMode: "interrupt", defaultProvider: "devin-cli", defaultModel: "m9" });
   expect(kv.get("defaultQueueMode")).toBe("interrupt");
   expect(kv.get("defaultModel")).toEqual({ provider: "devin-cli", model: "m9" });
@@ -65,4 +77,24 @@ test("panel get/set round-trips and validates", async () => {
   expect(() => p?.impl.set({ defaultQueueMode: "steer", defaultProvider: "", defaultModel: "" })).toThrow(
     "defaultQueueMode",
   );
+});
+
+test("present settings: stored values beat config.json, defaults are confined, bad values are rejected", async () => {
+  const { ctx, kv, panels } = kvCtx({ presentConfine: false, presentRoots: ["/cfg"] });
+  expect(presentConfined(ctx)).toBe(false);
+  expect(presentRoots(ctx)).toEqual(["/cfg"]);
+  expect(presentConfined(kvCtx().ctx)).toBe(true);
+
+  registerSettings(ctx);
+  const p = panels[0];
+  const base = { defaultQueueMode: "queue", defaultProvider: "", defaultModel: "" };
+  await p?.impl.set({ ...base, presentConfine: true, presentRoots: [" /srv/out ", ""] });
+  expect(kv.get("presentConfine")).toBe(true);
+  expect(kv.get("presentRoots")).toEqual(["/srv/out"]);
+  expect(await p?.impl.get()).toMatchObject({ presentConfine: true, presentRoots: ["/srv/out"] });
+
+  await p?.impl.set(base);
+  expect(kv.get("presentConfine")).toBe(true);
+  expect(() => p?.impl.set({ ...base, presentConfine: "yes" })).toThrow("presentConfine");
+  expect(() => p?.impl.set({ ...base, presentRoots: [1] })).toThrow("presentRoots");
 });

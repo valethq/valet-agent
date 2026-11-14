@@ -9,10 +9,11 @@ import { type Json, type Kernel, startKernel, waitFor } from "./kernel";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "valet-present-"));
 
-function harness(config: Record<string, unknown> = {}) {
+function harness(config: Record<string, unknown> = {}, kv: Record<string, unknown> = {}) {
   const blobs: { bytes: string; meta: { mime?: string; name?: string } }[] = [];
   const ctx = {
     config,
+    storage: { kv: { get: (k: string) => kv[k] } },
     store: {
       blobs: {
         put: async (b: Blob, meta: { mime?: string; name?: string }) => {
@@ -25,7 +26,7 @@ function harness(config: Record<string, unknown> = {}) {
   const tool = presentTool(ctx);
   const run = (cwd: string, input: { path?: unknown; name?: unknown }, role: Role = "owner") =>
     tool.invoke(input, { cwd, role } as ToolCall) as Promise<ToolResult>;
-  return { blobs, run };
+  return { blobs, run, tool };
 }
 
 describe("present tool", () => {
@@ -71,6 +72,34 @@ describe("present tool", () => {
     expect(
       presentedOf(await harness({ presentRoots: [other] }).run(ws, { path: join(other, "r.txt") })),
     ).toHaveLength(1);
+  });
+
+  test("confinement is a setting: the stored value beats config.json, and off is owner-only", async () => {
+    const ws = tmp();
+    const other = tmp();
+    writeFileSync(join(other, "s.txt"), "s");
+    const outside = { path: join(other, "s.txt") };
+
+    const open = harness({ presentConfine: false });
+    expect(open.tool.minRole).toBe("owner");
+    expect(presentedOf(await open.run(ws, outside))).toHaveLength(1);
+    expect((await open.run(ws, outside, "trusted")).isError).toBe(true);
+
+    const closed = harness({ presentConfine: false }, { presentConfine: true });
+    expect(closed.tool.minRole).toBe("trusted");
+    expect((await closed.run(ws, outside)).isError).toBe(true);
+    expect(harness().tool.minRole).toBe("trusted");
+  });
+
+  test("stored presentRoots replace the config.json list", async () => {
+    const ws = tmp();
+    const a = tmp();
+    const b = tmp();
+    writeFileSync(join(a, "a.txt"), "a");
+    writeFileSync(join(b, "b.txt"), "b");
+    const h = harness({ presentRoots: [a] }, { presentRoots: [b] });
+    expect((await h.run(ws, { path: join(a, "a.txt") })).isError).toBe(true);
+    expect(presentedOf(await h.run(ws, { path: join(b, "b.txt") }))).toHaveLength(1);
   });
 
   test("guests are refused, and bad input or too many files is an error that stores nothing", async () => {

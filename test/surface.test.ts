@@ -18,6 +18,7 @@ function fakeCtx(
 ) {
   return {
     config,
+    storage: { kv: { get: () => undefined } },
     scopes: { all: () => [{ key: "fake", plugin: "fake", impl: { list: () => tools } }] },
     events: {
       emit: async (_: string, payload: { input: unknown }) =>

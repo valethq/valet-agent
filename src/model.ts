@@ -11,7 +11,9 @@ export interface AgentConfig {
   defaultModel?: ModelRef;
   /** Tool names agent providers may see. Unset exposes every tools@1 tool the run's role allows. */
   exposedTools?: string[];
-  /** Directories besides the project workspace that the present tool may read from. */
+  /** Whether the present tool is limited to the project workspace plus presentRoots. Default true; the settings panel overrides it. */
+  presentConfine?: boolean;
+  /** Directories besides the project workspace that the present tool may read from. The settings panel overrides it. */
   presentRoots?: string[];
 }
 
