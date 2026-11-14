@@ -4,6 +4,7 @@ import { registerCommands } from "./commands";
 import { textOf } from "./content";
 import type { Env } from "./env";
 import { registerHttp } from "./http";
+import { ToolRouter } from "./surface";
 import type { AgentConfig } from "./model";
 import { RunQueue } from "./queue";
 import { registerSettings } from "./settings";
@@ -12,7 +13,8 @@ import { placeholderPatch } from "./title";
 
 export default definePlugin<AgentConfig>({
   activate(ctx) {
-    const env: Env = { ctx, agents: new AgentSessions(ctx), lastUsage: new Map() };
+    const tools = new ToolRouter(ctx);
+    const env: Env = { ctx, agents: new AgentSessions(ctx, tools), tools, lastUsage: new Map() };
     const queue = new RunQueue(env);
     ctx.onDispose(() => env.agents.closeAll());
     ctx.onConfigChange(() => {}); // config is read from ctx.config at use, so a reload needs no action
@@ -40,6 +42,7 @@ export default definePlugin<AgentConfig>({
     ctx.events.after("session.delete", (e) => {
       if (e.cancelled) return;
       queue.dropSession(e.payload.session.id);
+      env.tools.forget(e.payload.session.id);
       void env.agents.drop(e.payload.session.id);
     });
 

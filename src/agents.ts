@@ -1,5 +1,6 @@
 import type { AgentProvider, AgentSession } from "@valethq/sdk";
 import type { AgentCtx } from "./env";
+import type { ToolRouter } from "./surface";
 
 export interface AgentEntry {
   providerId: string;
@@ -13,9 +14,11 @@ export interface AgentEntry {
 export class AgentSessions {
   readonly #entries = new Map<string, AgentEntry>();
   readonly #ctx: AgentCtx;
+  readonly #tools: ToolRouter;
 
-  constructor(ctx: AgentCtx) {
+  constructor(ctx: AgentCtx, tools: ToolRouter) {
     this.#ctx = ctx;
+    this.#tools = tools;
   }
 
   async acquire(provider: AgentProvider, sessionId: string, cwd: string, model: string): Promise<AgentEntry> {
@@ -40,7 +43,7 @@ export class AgentSessions {
       cwd,
       model,
       ...(resumeId ? { resumeId } : {}),
-      mcpServers: [],
+      tools: this.#tools.surface(sessionId),
       signal: this.#ctx.signal,
     });
     this.#ctx.store.sessions.setProviderState(sessionId, provider.id, { resumeId: session.resumeId });

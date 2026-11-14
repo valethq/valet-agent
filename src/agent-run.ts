@@ -4,7 +4,23 @@ import type { Env } from "./env";
 import type { ModelRef } from "./model";
 import type { Outcome, RunCtx } from "./run-types";
 
+/** Runs one agent turn with the session's tools bound to this run. */
 export async function runAgent(
+  env: Env,
+  provider: AgentProvider,
+  cand: ModelRef,
+  rc: RunCtx,
+  info: ModelInfo,
+): Promise<Outcome> {
+  await env.tools.enter(rc);
+  try {
+    return await promptAgent(env, provider, cand, rc, info);
+  } finally {
+    env.tools.leave(rc);
+  }
+}
+
+async function promptAgent(
   env: Env,
   provider: AgentProvider,
   cand: ModelRef,

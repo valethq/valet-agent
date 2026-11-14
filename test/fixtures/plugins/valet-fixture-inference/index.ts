@@ -1,5 +1,6 @@
 import {
   type AgentEvent,
+  type AgentOpenOptions,
   definePlugin,
   type InferenceChunk,
   type ModelContent,
@@ -27,6 +28,20 @@ const untilAborted = (signal: AbortSignal): Promise<void> =>
 export default definePlugin({
   activate(ctx) {
     const log: Record<string, unknown>[] = [];
+    let surface: AgentOpenOptions["tools"] | undefined;
+    ctx.http.route(
+      "POST",
+      "/call",
+      async (req) => {
+        const body = (await req.json()) as { name: string; input: unknown };
+        const result = await surface?.call(body.name, body.input, {
+          callId: "after-run",
+          signal: req.signal,
+        });
+        return Response.json(result ?? { isError: true });
+      },
+      { public: true },
+    );
     ctx.http.route("GET", "/log", () => Response.json(log), { public: true });
 
     ctx.scopes.provide(
@@ -37,7 +52,13 @@ export default definePlugin({
         label: "Fake agent",
         listModels: async () => models,
         async open(opts) {
-          log.push({ op: "open", resumeId: opts.resumeId ?? null, model: opts.model });
+          log.push({
+            op: "open",
+            resumeId: opts.resumeId ?? null,
+            model: opts.model,
+            tools: opts.tools.list().length,
+          });
+          surface = opts.tools;
           return {
             resumeId: opts.resumeId ?? `remote-${opts.sessionId}`,
             async *prompt(input, signal): AsyncIterable<AgentEvent> {
@@ -47,6 +68,18 @@ export default definePlugin({
                 yield { type: "text-delta", text: "working" };
                 await untilAborted(signal);
                 yield { type: "finish", reason: "cancelled" };
+                return;
+              }
+              if (text.startsWith("mcp")) {
+                const listed = opts.tools.list().map((t) => t.name);
+                const signal = new AbortController().signal;
+                const ok = await opts.tools.call("echo", { a: 1 }, { callId: "c1", signal });
+                const denied = await opts.tools.call("echo", { deny: true }, { callId: "c2", signal });
+                const rewritten = await opts.tools.call("echo", { rewrite: true }, { callId: "c3", signal });
+                const unknown = await opts.tools.call("nope", {}, { callId: "c4", signal });
+                log.push({ op: "tools", listed, ok, denied, rewritten, unknown });
+                yield { type: "text-delta", text: "mcp done" };
+                yield { type: "finish", reason: "stop" };
                 return;
               }
               if (text.startsWith("tools")) {

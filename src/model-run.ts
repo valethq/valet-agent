@@ -3,6 +3,7 @@ import { autoCompact } from "./compactions";
 import type { Env } from "./env";
 import type { ModelRef } from "./model";
 import type { Outcome, RunCtx } from "./run-types";
+import { listTools } from "./tools";
 
 const MAX_STEPS = 25;
 
@@ -10,19 +11,6 @@ interface Call {
   callId: string;
   name: string;
   input: unknown;
-}
-
-async function listTools(env: Env, rc: RunCtx): Promise<Map<string, ToolDefinition>> {
-  const defs = new Map<string, ToolDefinition>();
-  for (const provider of env.ctx.scopes.all("tools")) {
-    const list = await provider.impl.list({
-      sessionId: rc.sessionId,
-      projectId: rc.projectId,
-      role: rc.role,
-    });
-    for (const def of list) if (!defs.has(def.name)) defs.set(def.name, def);
-  }
-  return defs;
 }
 
 const toolMessage = (callId: string, content: ModelContent[], isError: boolean): ModelMessage => ({
@@ -50,7 +38,7 @@ async function callTool(
   rc.parts.update(call.callId, { status: "running" });
   const signal = def.timeoutMs ? AbortSignal.any([rc.signal, AbortSignal.timeout(def.timeoutMs)]) : rc.signal;
   try {
-    const result = await def.invoke(call.input, {
+    const result = await def.invoke(gate.payload.input, {
       sessionId: rc.sessionId,
       runId: rc.runId,
       callId: call.callId,
@@ -78,7 +66,11 @@ export async function runModel(
   const built = await env.ctx.scopes
     .get("context")
     .build({ sessionId: rc.sessionId, runId: rc.runId, model: info, role: rc.role });
-  const defs = await listTools(env, rc);
+  const defs = await listTools(env.ctx.scopes, {
+    sessionId: rc.sessionId,
+    projectId: rc.projectId,
+    role: rc.role,
+  });
   const tools = [...defs.values()].map(({ name, description, inputSchema }) => ({
     name,
     description,

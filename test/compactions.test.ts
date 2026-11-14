@@ -41,6 +41,7 @@ const entry = {
 const env = {
   ctx: { scopes: { get: () => context } },
   agents: { acquire: async () => entry },
+  tools: { async enter() {}, leave() {} },
 } as unknown as Env;
 const store = {
   messages: { list: () => chat.map((data) => ({ message: {}, parts: [{ data }] })) },
