@@ -1,18 +1,15 @@
 import { expect, test } from "bun:test";
-import type { PluginContext } from "@valethq/sdk";
+import type { PluginContext, SettingsPanel } from "@valethq/sdk";
 import type { AgentConfig } from "../src/model";
 import { configFor } from "../src/model";
-import {
-  defaultQueueMode,
-  presentConfined,
-  presentRoots,
-  registerSettings,
-  type SettingsPanel,
-} from "../src/settings";
+import { defaultQueueMode, presentConfined, presentRoots, registerSettings } from "../src/settings";
+
+/** The panels under test have a form, so get and set are present. */
+type FormPanel = SettingsPanel & Required<Pick<SettingsPanel, "get" | "set">>;
 
 function kvCtx(config: AgentConfig = {}) {
   const kv = new Map<string, unknown>();
-  const panels: { key?: string; impl: SettingsPanel }[] = [];
+  const panels: { key?: string; impl: FormPanel }[] = [];
   const ctx = {
     config,
     storage: {
@@ -26,7 +23,7 @@ function kvCtx(config: AgentConfig = {}) {
     scopes: {
       define: () => {},
       provide: (_s: string, impl: SettingsPanel, opts?: { key?: string }) => {
-        panels.push({ key: opts?.key, impl });
+        panels.push({ key: opts?.key, impl: impl as FormPanel });
         return { dispose() {} };
       },
     },

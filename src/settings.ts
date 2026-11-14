@@ -1,20 +1,6 @@
 import type { PluginContext } from "@valethq/sdk";
 import { type AgentConfig, isModelRef, type ModelRef } from "./model";
 
-export interface SettingsPanel {
-  title: string;
-  description?: string;
-  schema: Record<string, unknown>;
-  get(): Record<string, unknown> | Promise<Record<string, unknown>>;
-  set(values: Record<string, unknown>): void | Promise<void>;
-}
-
-declare module "@valethq/sdk" {
-  interface ValetScopes {
-    settings: SettingsPanel;
-  }
-}
-
 const QUEUE_MODES = ["queue", "interrupt"] as const;
 
 /** Session agent.queueMode wins; this is the default when it is unset. */
