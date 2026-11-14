@@ -1,6 +1,7 @@
 import type { PluginContext, Role, ToolDefinition, ToolResult, ToolSpec, ToolSurface } from "@valethq/sdk";
 import type { AgentConfig } from "./model";
 import type { RunCtx } from "./run-types";
+import { presentedOf } from "./present";
 import { listTools } from "./tools";
 
 interface Active {
@@ -38,7 +39,7 @@ export class ToolRouter {
   }
 
   async enter(rc: RunCtx): Promise<void> {
-    const found = await listTools(this.#ctx.scopes, {
+    const found = await listTools(this.#ctx, {
       sessionId: rc.sessionId,
       projectId: rc.projectId,
       role: rc.role as Role,
@@ -102,7 +103,7 @@ export class ToolRouter {
     if ("denied" in verdict) return failure(`Denied: ${verdict.denied}`);
     const signals = [rc.signal, call.signal, ...(def.timeoutMs ? [AbortSignal.timeout(def.timeoutMs)] : [])];
     try {
-      return await def.invoke(verdict.input, {
+      const result = await def.invoke(verdict.input, {
         sessionId,
         runId: rc.runId,
         callId: call.callId,
@@ -113,6 +114,8 @@ export class ToolRouter {
         // spec-gap: the provider's call id is not a tool-call part here, so progress has nowhere to go yet.
         progress: () => {},
       });
+      rc.parts.files(presentedOf(result));
+      return result;
     } catch (error) {
       return failure(error instanceof Error ? error.message : String(error));
     }

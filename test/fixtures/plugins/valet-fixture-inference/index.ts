@@ -82,6 +82,15 @@ export default definePlugin({
                 yield { type: "finish", reason: "stop" };
                 return;
               }
+              if (text.startsWith("present ")) {
+                const path = text.slice("present ".length);
+                const call = { callId: "p1", signal: new AbortController().signal };
+                const result = await opts.tools.call("present", { path }, call);
+                log.push({ op: "present", result });
+                yield { type: "text-delta", text: "presented" };
+                yield { type: "finish", reason: "stop" };
+                return;
+              }
               if (text.startsWith("tools")) {
                 yield {
                   type: "tool-start",
@@ -132,6 +141,12 @@ export default definePlugin({
           const text = last ? textOf(last.content) : "";
           if (text.startsWith("tool")) {
             yield { type: "tool-call", callId: "t1", name: "echo", input: { a: 1 } };
+            yield { type: "finish", reason: "tool-calls" };
+            return;
+          }
+          if (text.startsWith("present ")) {
+            const path = text.slice("present ".length);
+            yield { type: "tool-call", callId: "p1", name: "present", input: { path } };
             yield { type: "finish", reason: "tool-calls" };
             return;
           }

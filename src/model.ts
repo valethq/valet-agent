@@ -11,6 +11,8 @@ export interface AgentConfig {
   defaultModel?: ModelRef;
   /** Tool names agent providers may see. Unset exposes every tools@1 tool the run's role allows. */
   exposedTools?: string[];
+  /** Directories besides the project workspace that the present tool may read from. */
+  presentRoots?: string[];
 }
 
 export const DEFAULT_MODEL: ModelRef = { provider: "devin-cli", model: "claude-opus-5-5-medium" };

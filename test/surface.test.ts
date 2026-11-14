@@ -51,7 +51,7 @@ describe("ToolRouter", () => {
         .surface("ses_1")
         .list()
         .map((t) => t.name),
-    ).toEqual(["echo", "shell"]);
+    ).toEqual(["echo", "shell", "present"]);
   });
 
   test("exposedTools narrows the list and the callable set", async () => {

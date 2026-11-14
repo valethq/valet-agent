@@ -3,6 +3,7 @@ import { autoCompact } from "./compactions";
 import type { Env } from "./env";
 import type { ModelRef } from "./model";
 import type { Outcome, RunCtx } from "./run-types";
+import { presentedOf } from "./present";
 import { listTools } from "./tools";
 
 const MAX_STEPS = 25;
@@ -50,6 +51,7 @@ async function callTool(
     });
     const output = result.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n");
     rc.parts.end(call.callId, result.isError ? "error" : "done", { output, result });
+    rc.parts.files(presentedOf(result));
     return toolMessage(call.callId, result.content, result.isError === true);
   } catch (error) {
     return fail("error", error instanceof Error ? error.message : String(error));
@@ -66,7 +68,7 @@ export async function runModel(
   const built = await env.ctx.scopes
     .get("context")
     .build({ sessionId: rc.sessionId, runId: rc.runId, model: info, role: rc.role });
-  const defs = await listTools(env.ctx.scopes, {
+  const defs = await listTools(env.ctx, {
     sessionId: rc.sessionId,
     projectId: rc.projectId,
     role: rc.role,

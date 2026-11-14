@@ -128,6 +128,7 @@ describe("agent kind", () => {
     const [a] = await done(id, 1);
     expect(a?.parts.map((p) => p.type)).toEqual(["reasoning", "text", "notice", "text"]);
     expect(a?.parts[2]?.data).toMatchObject({ level: "warn", text: "heads up" });
+    expect(a?.parts[2]?.status).toBe("complete");
     expect(textOf(a as Entry)).toBe("Hello, note me");
   });
 

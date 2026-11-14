@@ -55,6 +55,16 @@ export class PartStream {
     });
   }
 
+  /** Opens one complete `file` part per file, after whatever part is current. */
+  files(files: { blobId: string; name: string; mime: string }[]): void {
+    if (files.length === 0) return;
+    this.output = true;
+    this.#enqueue((id) => {
+      this.#closeText("complete");
+      for (const f of files) this.#store.messages.openPart(id, { type: "file", ...f }).close("complete");
+    });
+  }
+
   start(init: {
     callId: string;
     name: string;
