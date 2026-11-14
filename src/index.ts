@@ -1,20 +1,27 @@
-import { definePlugin } from "@valethq/sdk";
+import { definePlugin, type ToolDefinition } from "@valethq/sdk";
 import { AgentSessions } from "./agents";
 import { registerCommands } from "./commands";
 import { textOf } from "./content";
+import { agentMeta } from "./copy";
 import type { Env } from "./env";
 import { registerHttp } from "./http";
 import { ToolRouter } from "./surface";
 import type { AgentConfig } from "./model";
+import { presentTool } from "./present";
 import { RunQueue } from "./queue";
 import { registerSettings } from "./settings";
 import { authorRole } from "./role";
+import { subagentTool } from "./subagent";
 import { placeholderPatch } from "./title";
 
 export default definePlugin<AgentConfig>({
   activate(ctx) {
-    const tools = new ToolRouter(ctx);
-    const env: Env = { ctx, agents: new AgentSessions(ctx, tools), tools, lastUsage: new Map() };
+    const ownTools = (): ToolDefinition[] => [
+      presentTool(ctx) as ToolDefinition,
+      subagentTool(ctx, queue) as ToolDefinition,
+    ];
+    const tools = new ToolRouter(ctx, ownTools);
+    const env: Env = { ctx, agents: new AgentSessions(ctx, tools), tools, lastUsage: new Map(), ownTools };
     const queue = new RunQueue(env);
     ctx.onDispose(() => env.agents.closeAll());
     ctx.onConfigChange(() => {}); // config is read from ctx.config at use, so a reload needs no action
@@ -26,12 +33,18 @@ export default definePlugin<AgentConfig>({
     ctx.events.after("message.create", (e) => {
       const { message, parts } = e.payload;
       if (e.cancelled || message.role !== "user" || message.status !== "complete") return;
+      const meta = agentMeta(message);
+      if (meta.copiedFrom) return; // forks and moves copy history; they never rerun it
       const session = ctx.store.sessions.get(message.sessionId);
       if (session?.title === null) {
         const patch = placeholderPatch(session, textOf(parts));
         if (patch) void ctx.store.sessions.update(session.id, patch).catch(() => {});
       }
-      const role = authorRole(ctx.store, message.authorPrincipalId, e.caller);
+      // a subagent prompt runs with its parent run's role, but only when valet-agent itself wrote it
+      const role =
+        meta.parentRunId && e.caller.plugin === ctx.plugin.id
+          ? (ctx.store.runs.get(meta.parentRunId)?.role ?? "guest")
+          : authorRole(ctx.store, message.authorPrincipalId, e.caller);
       queue.enqueue({ sessionId: message.sessionId, message, parts, role });
     });
 

@@ -82,6 +82,15 @@ export default definePlugin({
                 yield { type: "finish", reason: "stop" };
                 return;
               }
+              if (text.startsWith("sub ")) {
+                const [prompt, session] = text.slice("sub ".length).split("|");
+                const input = { prompt, ...(session ? { session } : {}) };
+                const result = await opts.tools.call("subagent", input, { callId: "s1", signal });
+                log.push({ op: "subagent", sessionId: opts.sessionId, result });
+                yield { type: "text-delta", text: "sub done" };
+                yield { type: "finish", reason: "stop" };
+                return;
+              }
               if (text.startsWith("present ")) {
                 const path = text.slice("present ".length);
                 const call = { callId: "p1", signal: new AbortController().signal };

@@ -8,6 +8,7 @@ export interface RunCtx {
   projectId: string;
   cwd: string;
   runId: string;
+  triggerSeq: number;
   role: Role;
   caller: Caller;
   content: ModelContent[];

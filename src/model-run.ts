@@ -68,11 +68,11 @@ export async function runModel(
   const built = await env.ctx.scopes
     .get("context")
     .build({ sessionId: rc.sessionId, runId: rc.runId, model: info, role: rc.role });
-  const defs = await listTools(env.ctx, {
-    sessionId: rc.sessionId,
-    projectId: rc.projectId,
-    role: rc.role,
-  });
+  const defs = await listTools(
+    env.ctx,
+    { sessionId: rc.sessionId, projectId: rc.projectId, role: rc.role },
+    env.ownTools(),
+  );
   const tools = [...defs.values()].map(({ name, description, inputSchema }) => ({
     name,
     description,

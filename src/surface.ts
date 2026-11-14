@@ -20,9 +20,11 @@ export class ToolRouter {
   readonly #ctx: PluginContext<AgentConfig>;
   readonly #active = new Map<string, Active>();
   readonly #surfaces = new Map<string, ToolSurface>();
+  readonly #own: () => ToolDefinition[];
 
-  constructor(ctx: PluginContext<AgentConfig>) {
+  constructor(ctx: PluginContext<AgentConfig>, own: () => ToolDefinition[]) {
     this.#ctx = ctx;
+    this.#own = own;
   }
 
   surface(sessionId: string): ToolSurface {
@@ -39,11 +41,11 @@ export class ToolRouter {
   }
 
   async enter(rc: RunCtx): Promise<void> {
-    const found = await listTools(this.#ctx, {
-      sessionId: rc.sessionId,
-      projectId: rc.projectId,
-      role: rc.role as Role,
-    });
+    const found = await listTools(
+      this.#ctx,
+      { sessionId: rc.sessionId, projectId: rc.projectId, role: rc.role as Role },
+      this.#own(),
+    );
     const exposed = this.#ctx.config.exposedTools;
     const defs = exposed ? new Map([...found].filter(([name]) => exposed.includes(name))) : found;
     this.#active.set(rc.sessionId, { rc, defs });

@@ -1,7 +1,9 @@
 import type { Caller, Part } from "@valethq/sdk";
 import { compactHarness, compactWithValet } from "./compactions";
 import type { Env } from "./env";
+import { forkSession } from "./fork";
 import { configFor, resolveModel } from "./model";
+import { moveSession } from "./move";
 import type { RunQueue } from "./queue";
 import { authorRole } from "./role";
 
@@ -53,6 +55,33 @@ const COMMANDS: Record<string, Command> = {
       ? `Could not create a session: ${res.cancelReason ?? "cancelled"}.`
       : `New session: ${res.id}`;
   },
+  async fork({ env, sessionId, arg, caller }) {
+    const forked = await forkSession(storeFor(env, caller), sessionId, arg === "" ? undefined : arg);
+    return `Forked: ${forked.id}`;
+  },
+  async move({ env, queue, sessionId, arg, caller }) {
+    const { store } = env.ctx;
+    if (arg === "") return "Usage: /move <project name or id>";
+    const wanted = arg.toLowerCase();
+    const matches = store.projects.list().filter((p) => p.id === arg || p.name.toLowerCase() === wanted);
+    if (matches.length !== 1)
+      return matches.length === 0
+        ? `No project "${arg}".`
+        : `More than one project is named "${arg}"; use its id.`;
+    const project = matches[0] as { id: string; name: string };
+    const from =
+      store.projects.get(store.sessions.get(sessionId)?.projectId ?? "")?.name ?? "another project";
+    const { activeRunId, queued } = queue.snapshot(sessionId);
+    const moved = await moveSession(
+      storeFor(env, caller),
+      sessionId,
+      project.id,
+      activeRunId !== undefined || queued > 0,
+    );
+    // the original session is gone, so the reply goes to the moved one
+    await postReply(env, moved.id, `Moved here from ${from}.`);
+    return undefined;
+  },
   async compact({ env, queue, sessionId, arg }) {
     const { store } = env.ctx;
     const session = store.sessions.get(sessionId);
@@ -86,6 +115,13 @@ const COMMANDS: Record<string, Command> = {
   },
 };
 
+const storeFor = (env: Env, caller: Caller) => {
+  const principalId = caller.actor?.principalId;
+  return principalId && env.ctx.store.principals.get(principalId)
+    ? env.ctx.store.as({ principalId })
+    : env.ctx.store;
+};
+
 function postReply(env: Env, sessionId: string, text: string): Promise<unknown> {
   return env.ctx.store.messages.create({
     sessionId,
@@ -108,7 +144,10 @@ export function registerCommands(env: Env, queue: RunQueue): void {
     "message.create",
     async (e) => {
       const { message, parts } = e.payload;
-      const match = message.role === "user" ? /^\/(\w+)(?:\s+([\s\S]*))?$/.exec(firstText(parts)) : null;
+      // valet-agent's own writes (copies, subagent prompts) are never commands
+      const own = e.caller.plugin === ctx.plugin.id;
+      const match =
+        message.role === "user" && !own ? /^\/(\w+)(?:\s+([\s\S]*))?$/.exec(firstText(parts)) : null;
       const command = match && COMMANDS[(match[1] as string).toLowerCase()];
       if (!command || authorRole(ctx.store, message.authorPrincipalId, e.caller) !== "owner") return;
       try {

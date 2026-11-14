@@ -1,6 +1,7 @@
 import type { AgentProvider, ModelInfo } from "@valethq/sdk";
 import { CompactionRecorder, compactionNote, harnessCompactions } from "./compactions";
 import type { Env } from "./env";
+import { historyNote } from "./history";
 import type { ModelRef } from "./model";
 import type { Outcome, RunCtx } from "./run-types";
 
@@ -38,7 +39,12 @@ async function promptAgent(
     : undefined;
   const compactions = harnessCompactions(rc.store, rc.sessionId);
   const note = compactions.length > entry.notedCompactions;
-  const content = note ? [compactionNote(compactions), ...rc.content] : rc.content;
+  const history = entry.needsPreamble ? historyNote(rc.store, rc.sessionId, rc.triggerSeq) : undefined;
+  const content = [
+    ...(history ? [history] : []),
+    ...(note ? [compactionNote(compactions)] : []),
+    ...rc.content,
+  ];
   if (note) entry.notedCompactions = compactions.length;
   const input = { content, ...(preamble ? { preamble } : {}) };
   const recorder = new CompactionRecorder(ctx, rc.sessionId, provider.label);

@@ -109,6 +109,7 @@ export async function execute(env: Env, job: Job, active: Active): Promise<void>
     projectId: session.projectId,
     cwd: project?.workspaceDir ?? ctx.paths.data,
     runId: run.id,
+    triggerSeq: job.message.seq,
     role: job.role,
     caller: { plugin: ctx.plugin.id, ...(author ? { actor: { principalId: author, role: job.role } } : {}) },
     content: toContent(job.parts),

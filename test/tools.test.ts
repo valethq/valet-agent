@@ -43,7 +43,7 @@ async function toolsTurn(): Promise<Record<string, Json>> {
 describe("tools for agent providers", () => {
   test("the provider gets the run's tools and calls them through the tool.call gate", async () => {
     const seen = await toolsTurn();
-    expect(seen.listed).toEqual(["echo", "present"]);
+    expect(seen.listed).toEqual(["echo", "present", "subagent"]);
     expect(seen.ok).toEqual({ content: [{ type: "text", text: 'echo:{"a":1}' }] });
     expect(seen.denied).toEqual({
       content: [{ type: "text", text: "Denied: fixture says no" }],
@@ -68,6 +68,6 @@ describe("tools for agent providers", () => {
 
   test("the open log records how many tools the session was given", async () => {
     await toolsTurn();
-    expect((await log()).filter((l) => l.op === "open").at(-1)?.tools).toBe(2);
+    expect((await log()).filter((l) => l.op === "open").at(-1)?.tools).toBe(3);
   });
 });

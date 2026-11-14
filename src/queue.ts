@@ -2,6 +2,12 @@ import type { Env } from "./env";
 import { type Active, execute, type Job } from "./runner";
 import { defaultQueueMode } from "./settings";
 
+export interface Finished {
+  sessionId: string;
+  messageId: string;
+  runId?: string;
+}
+
 interface SessionQueue {
   active?: Active;
   pending: Job[];
@@ -11,6 +17,7 @@ interface SessionQueue {
 export class RunQueue {
   readonly #env: Env;
   readonly #queues = new Map<string, SessionQueue>();
+  readonly #listeners = new Set<(f: Finished) => void>();
 
   constructor(env: Env) {
     this.#env = env;
@@ -51,8 +58,16 @@ export class RunQueue {
   dropSession(sessionId: string): void {
     const queue = this.#queues.get(sessionId);
     if (!queue) return;
+    const dropped = queue.pending;
     queue.pending = [];
     queue.active?.controller.abort();
+    for (const job of dropped) for (const fn of this.#listeners) fn({ sessionId, messageId: job.message.id });
+  }
+
+  /** Calls `fn` after each job ends, whatever its outcome. Returns the unsubscribe. */
+  onFinished(fn: (f: Finished) => void): () => void {
+    this.#listeners.add(fn);
+    return () => this.#listeners.delete(fn);
   }
 
   snapshot(sessionId: string): { activeRunId?: string; queued: number } {
@@ -75,6 +90,9 @@ export class RunQueue {
         } catch (error) {
           this.#env.ctx.log.error("run failed", { sessionId, error: String(error) });
         }
+        const runId = queue.active.runId;
+        for (const fn of this.#listeners)
+          fn({ sessionId, messageId: job.message.id, ...(runId ? { runId } : {}) });
         queue.active = undefined;
       }
     } finally {
