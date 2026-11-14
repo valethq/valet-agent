@@ -3,10 +3,14 @@ import { copyMessages } from "./copy";
 
 const isCancelled = (r: object): r is { cancelled: true; cancelReason?: string } => "cancelled" in r;
 
-/** `settings` with `patch` merged into its `agent` namespace and the title placeholder dropped (the copy keeps the title it was given). */
+/** `settings` with `patch` merged into its `agent` namespace; the title placeholder and the link to the run that spawned a subagent are dropped (a copy is not that run's child). */
 export function agentSettings(settings: SessionSettings, patch: Record<string, unknown>): SessionSettings {
   const { titlePlaceholder: _, ...rest } = structuredClone(settings);
-  const agent = typeof rest.agent === "object" && rest.agent !== null ? rest.agent : {};
+  const {
+    parentRunId: _r,
+    stage: _s,
+    ...agent
+  } = (typeof rest.agent === "object" && rest.agent !== null ? rest.agent : {}) as Record<string, unknown>;
   return { ...rest, agent: { ...agent, ...patch } };
 }
 

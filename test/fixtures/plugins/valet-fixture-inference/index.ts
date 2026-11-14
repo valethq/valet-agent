@@ -83,13 +83,17 @@ export default definePlugin({
                 return;
               }
               if (text.startsWith("sub ")) {
-                const [prompt, session] = text.slice("sub ".length).split("|");
-                const input = { prompt, ...(session ? { session } : {}) };
-                const result = await opts.tools.call("subagent", input, { callId: "s1", signal });
+                const tasks = JSON.parse(text.slice("sub ".length));
+                const result = await opts.tools.call("subagent", { tasks }, { callId: "s1", signal });
                 log.push({ op: "subagent", sessionId: opts.sessionId, result });
                 yield { type: "text-delta", text: "sub done" };
                 yield { type: "finish", reason: "stop" };
                 return;
+              }
+              if (text.startsWith("pause")) {
+                log.push({ op: "start", text, at: Date.now() });
+                await new Promise((resolve) => setTimeout(resolve, 300));
+                log.push({ op: "end", text, at: Date.now() });
               }
               if (text.startsWith("present ")) {
                 const path = text.slice("present ".length);

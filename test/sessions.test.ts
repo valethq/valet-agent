@@ -171,35 +171,90 @@ describe("move", () => {
 });
 
 describe("subagent", () => {
+  const call = async (parent: string, tasks: unknown[]): Promise<Json> => {
+    const before = (await log()).filter((l) => l.op === "subagent" && l.sessionId === parent).length;
+    await send(parent, `sub ${JSON.stringify(tasks)}`);
+    return waitFor(async () => {
+      const calls = (await log()).filter((l) => l.op === "subagent" && l.sessionId === parent);
+      return calls.length > before && calls.at(-1)?.result;
+    });
+  };
+  const childrenOf = async (parent: string): Promise<Json[]> =>
+    (await k.api(`/api/core/sessions?projectId=${projectA}`)).body
+      .filter((s: Json) => s.parentSessionId === parent)
+      .sort((a: Json, b: Json) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+
   test("runs a child session with the parent's role and returns its reply", async () => {
     const parent = await newSession();
-    await send(parent, "sub look around");
-    const [reply] = await replies(parent, 1);
-    expect(textOf(reply as Entry)).toBe("sub done");
-
-    const call = (await log()).filter((l) => l.op === "subagent" && l.sessionId === parent).at(-1) as Json;
-    expect(call.result.isError).toBeUndefined();
-    const childId = call.result.meta.sessionId;
-    expect(call.result.content[0].text).toStartWith("Hello, look around\n\n[subagent session ");
+    const result = await call(parent, [{ prompt: "look around", title: "Look" }]);
+    expect(result.isError).toBeUndefined();
+    const childId = result.meta.sessions[0].sessionId;
+    expect(result.content[0].text).toStartWith("Hello, look around\n\n[subagent session ");
 
     const child = (await sessionOf(childId)).body;
-    expect(child).toMatchObject({ parentSessionId: parent, projectId: projectA, title: "look around" });
+    expect(child).toMatchObject({ parentSessionId: parent, projectId: projectA, title: "Look" });
     expect(child.settings.model).toEqual(agent.model);
+    const [reply] = await replies(parent, 1);
+    expect(child.settings.agent).toEqual({ parentRunId: reply?.message.runId, stage: 1 });
     const [prompt, answer] = await messages(childId);
     expect(prompt?.message.meta.agent.parentRunId).toBe(reply?.message.runId);
     const run = (await k.api(`/api/core/runs/${answer?.message.runId}`)).body;
     expect(run).toMatchObject({ status: "complete", role: "owner" });
   });
 
+  test("tasks without a stage run in parallel", async () => {
+    const parent = await newSession();
+    const started = Date.now();
+    const result = await call(parent, [{ prompt: "pause a" }, { prompt: "pause b" }, { prompt: "pause c" }]);
+    expect(Date.now() - started).toBeLessThan(800);
+    expect(result.meta.sessions.map((s: Json) => s.status)).toEqual(["complete", "complete", "complete"]);
+    const text: string = result.content[0].text;
+    expect(text.indexOf("Hello, pause a")).toBeLessThan(text.indexOf("Hello, pause b"));
+    expect(text.match(/\[subagent session /g)).toHaveLength(3);
+    const events = (await log()).filter((l) => /^pause [abc]$/.test(l.text));
+    const starts = events.filter((l) => l.op === "start").map((l) => l.at);
+    const firstEnd = Math.min(...events.filter((l) => l.op === "end").map((l) => l.at));
+    expect(Math.max(...starts)).toBeLessThan(firstEnd);
+  });
+
+  test("stages run in order; tasks sharing a stage run together", async () => {
+    const parent = await newSession();
+    const result = await call(parent, [
+      { prompt: "pause late", stage: 2 },
+      { prompt: "pause early one", stage: 1 },
+      { prompt: "pause early two", stage: 1 },
+    ]);
+    expect(result.isError).toBeUndefined();
+    const events = (await log()).filter((l) => /^pause (late|early)/.test(l.text));
+    const at = (op: string, text: string) => events.find((l) => l.op === op && l.text === text)?.at as number;
+    expect(at("start", "pause early two")).toBeLessThan(at("end", "pause early one"));
+    expect(at("start", "pause late")).toBeGreaterThanOrEqual(at("end", "pause early one"));
+    expect(at("start", "pause late")).toBeGreaterThanOrEqual(at("end", "pause early two"));
+
+    const kids = await childrenOf(parent);
+    expect(kids.map((c) => c.settings.agent.stage)).toEqual([1, 1, 2]);
+    const text: string = result.content[0].text;
+    expect(text.indexOf("### pause early one")).toBeLessThan(text.indexOf("### pause late"));
+  });
+
+  test("a stage's children exist only once the stage starts", async () => {
+    const parent = await newSession();
+    const done = call(parent, [
+      { prompt: "pause first", stage: 1 },
+      { prompt: "pause second", stage: 2 },
+    ]);
+    await waitFor(async () => (await childrenOf(parent)).length === 1);
+    expect(await childrenOf(parent)).toHaveLength(1);
+    await done;
+    expect(await childrenOf(parent)).toHaveLength(2);
+  });
+
   test("continues its own child, and refuses a session that isn't one", async () => {
     const parent = await newSession();
-    await send(parent, "sub first");
-    await replies(parent, 1);
-    const first = (await log()).filter((l) => l.op === "subagent" && l.sessionId === parent).at(-1) as Json;
-    const childId = first.result.meta.sessionId;
+    const first = await call(parent, [{ prompt: "first" }]);
+    const childId = first.meta.sessions[0].sessionId;
 
-    await send(parent, `sub second|${childId}`);
-    await replies(parent, 2);
+    await call(parent, [{ prompt: "second", session: childId }]);
     expect((await messages(childId)).map(textOf)).toEqual([
       "first",
       "Hello, first",
@@ -208,11 +263,20 @@ describe("subagent", () => {
     ]);
 
     const stranger = await newSession();
-    await send(parent, `sub third|${stranger}`);
-    await replies(parent, 3);
-    const refused = (await log()).filter((l) => l.op === "subagent" && l.sessionId === parent).at(-1) as Json;
-    expect(refused.result).toMatchObject({ isError: true });
-    expect(refused.result.content[0].text).toContain("is not a subagent of this chat");
+    const refused = await call(parent, [{ prompt: "third", session: stranger }]);
+    expect(refused).toMatchObject({ isError: true });
+    expect(refused.content[0].text).toContain("is not a subagent of this chat");
     expect(await messages(stranger)).toHaveLength(0);
+  });
+
+  test("a bad tasks list is refused before anything starts", async () => {
+    const parent = await newSession();
+    const text = async (tasks: unknown[]) => (await call(parent, tasks)).content[0].text as string;
+    expect(await text([])).toBe("tasks must be a non-empty array");
+    expect(await text([{ stage: 1 }])).toBe("tasks[0].prompt is required");
+    expect(await text([{ prompt: "a", stage: 0 }])).toContain("tasks[0].stage must be a whole number");
+    expect(await text([{ prompt: "a", stage: 1.5 }])).toContain("tasks[0].stage must be a whole number");
+    expect(await text(Array.from({ length: 9 }, () => ({ prompt: "a" })))).toBe("at most 8 tasks per call");
+    expect(await childrenOf(parent)).toHaveLength(0);
   });
 });
