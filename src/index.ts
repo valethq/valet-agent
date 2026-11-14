@@ -1,5 +1,4 @@
 import { definePlugin } from "@valethq/sdk";
-import "./context-types";
 import { AgentSessions } from "./agents";
 import { registerCommands } from "./commands";
 import { textOf } from "./content";
@@ -9,7 +8,7 @@ import type { AgentConfig } from "./model";
 import { RunQueue } from "./queue";
 import { registerSettings } from "./settings";
 import { authorRole } from "./role";
-import { titleFrom } from "./title";
+import { placeholderPatch } from "./title";
 
 export default definePlugin<AgentConfig>({
   activate(ctx) {
@@ -27,8 +26,8 @@ export default definePlugin<AgentConfig>({
       if (e.cancelled || message.role !== "user" || message.status !== "complete") return;
       const session = ctx.store.sessions.get(message.sessionId);
       if (session?.title === null) {
-        const title = titleFrom(textOf(parts));
-        if (title) void ctx.store.sessions.update(session.id, { title }).catch(() => {});
+        const patch = placeholderPatch(session, textOf(parts));
+        if (patch) void ctx.store.sessions.update(session.id, patch).catch(() => {});
       }
       const role = authorRole(ctx.store, message.authorPrincipalId, e.caller);
       queue.enqueue({ sessionId: message.sessionId, message, parts, role });
@@ -64,8 +63,8 @@ export default definePlugin<AgentConfig>({
             const first = ctx.store.messages
               .list(s.id, { limit: 20 })
               .find(({ message }) => message.role === "user");
-            const title = first ? titleFrom(textOf(first.parts)) : null;
-            if (title) await ctx.store.sessions.update(s.id, { title });
+            const patch = first ? placeholderPatch(s, textOf(first.parts)) : null;
+            if (patch) await ctx.store.sessions.update(s.id, patch);
           } catch {}
         }
       }

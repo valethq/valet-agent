@@ -1,15 +1,12 @@
 {
   "schema": 1,
   "id": "valet-agent",
-  "name": "valet-agent",
+  "name": "Agent",
   "version": "0.1.0",
   "description": "Run queue, provider bridging, fallbacks and slash commands.",
   "valet": "^0.1.0",
   "main": "./src/index.ts",
   "provides": ["settings@1"],
-  "dependencies": {
-    "valet-contextmanager": "^0.1.0"
-  },
   "requires": ["inference@1", "context@1"],
   "optionalRequires": ["tools@1"]
 }

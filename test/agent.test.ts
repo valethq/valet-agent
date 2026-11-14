@@ -283,6 +283,7 @@ describe("titles", () => {
     await send(id, "please summarize this document");
     const title = await waitFor(async () => (await k.api(`/api/core/sessions/${id}`)).body.title);
     expect(title).toBe("please summarize this document");
+    expect((await k.api(`/api/core/sessions/${id}`)).body.settings.titlePlaceholder).toBe(title);
 
     await send(id, "and now something completely different");
     await done(id, 2);

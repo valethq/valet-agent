@@ -44,6 +44,7 @@ export function registerSettings(ctx: PluginContext<AgentConfig>): void {
             title: "Default queue mode",
             description: "queue: new messages wait for the active run. interrupt: cancel it and run now.",
             enum: QUEUE_MODES,
+            enumNames: ["Queue", "Interrupt"],
           },
           defaultProvider: { type: "string", title: "Default provider" },
           defaultModel: { type: "string", title: "Default model" },

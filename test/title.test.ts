@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { titleFrom } from "../src/title";
+import type { Session } from "@valethq/sdk";
+import { placeholderPatch, titleFrom } from "../src/title";
 
 describe("titleFrom", () => {
   test("plain text is trimmed", () => {
@@ -37,5 +38,20 @@ describe("titleFrom", () => {
     expect(titleFrom("")).toBeNull();
     expect(titleFrom("  \n\t  ")).toBeNull();
     expect(titleFrom("###")).toBeNull();
+  });
+});
+
+describe("placeholderPatch", () => {
+  const session = { title: null, settings: { persona: "p" } } as unknown as Session;
+
+  test("sets the title and records it as the placeholder, keeping other settings", () => {
+    expect(placeholderPatch(session, "## hello world")).toEqual({
+      title: "hello world",
+      settings: { persona: "p", titlePlaceholder: "hello world" },
+    });
+  });
+
+  test("nothing to title -> null", () => {
+    expect(placeholderPatch(session, "/stop")).toBeNull();
   });
 });
