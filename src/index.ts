@@ -1,7 +1,7 @@
 import { definePlugin, type ToolDefinition } from "@valethq/sdk";
 import { AgentSessions } from "./agents";
 import { registerCommands } from "./commands";
-import { textOf } from "./content";
+import { isNotification, textOf } from "./content";
 import { agentMeta } from "./copy";
 import type { Env } from "./env";
 import { registerHttp } from "./http";
@@ -32,11 +32,12 @@ export default definePlugin<AgentConfig>({
 
     ctx.events.after("message.create", (e) => {
       const { message, parts } = e.payload;
-      if (e.cancelled || message.role !== "user" || message.status !== "complete") return;
+      const notification = isNotification(message);
+      if (e.cancelled || (message.role !== "user" && !notification) || message.status !== "complete") return;
       const meta = agentMeta(message);
       if (meta.copiedFrom) return; // forks and moves copy history; they never rerun it
       const session = ctx.store.sessions.get(message.sessionId);
-      if (session?.title === null) {
+      if (!notification && session?.title === null) {
         const patch = placeholderPatch(session, textOf(parts));
         if (patch) void ctx.store.sessions.update(session.id, patch).catch(() => {});
       }

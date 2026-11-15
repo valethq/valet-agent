@@ -1,6 +1,8 @@
 import type { ModelContent, Store } from "@valethq/sdk";
+import { isNotification } from "./content";
 
 const MAX_CHARS = 60_000;
+const label: Record<string, string> = { user: "User", assistant: "Assistant" };
 
 /**
  * The chat before `beforeSeq` as one text block, for a harness session that starts fresh in a chat that already has
@@ -16,12 +18,12 @@ export function historyNote(store: Store, sessionId: string, beforeSeq: number):
   const lines: string[] = [];
   for (const { message, parts } of entries) {
     if (summary && message.seq <= summary.through) continue;
-    if (message.role !== "user" && message.role !== "assistant") continue;
+    if (message.role !== "user" && message.role !== "assistant" && !isNotification(message)) continue;
     const text = parts
       .flatMap(({ data }) => (data.type === "text" ? [data.text] : []))
       .join("\n")
       .trim();
-    if (text) lines.push(`${message.role === "user" ? "User" : "Assistant"}: ${text}`);
+    if (text) lines.push(`${label[message.role] ?? "Notification"}: ${text}`);
   }
   if (lines.length === 0 && !summary) return undefined;
   let transcript = lines.join("\n\n");
