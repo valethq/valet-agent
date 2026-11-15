@@ -32,7 +32,7 @@ export default definePlugin<AgentConfig>({
 
     ctx.events.after("message.create", (e) => {
       const { message, parts } = e.payload;
-      const notification = isNotification(message);
+      const notification = isNotification(ctx.store, message, parts);
       if (e.cancelled || (message.role !== "user" && !notification) || message.status !== "complete") return;
       const meta = agentMeta(message);
       if (meta.copiedFrom) return; // forks and moves copy history; they never rerun it

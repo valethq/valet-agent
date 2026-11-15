@@ -18,9 +18,10 @@ export function historyNote(store: Store, sessionId: string, beforeSeq: number):
   const lines: string[] = [];
   for (const { message, parts } of entries) {
     if (summary && message.seq <= summary.through) continue;
-    if (message.role !== "user" && message.role !== "assistant" && !isNotification(message)) continue;
+    if (message.role !== "user" && message.role !== "assistant" && !isNotification(store, message, parts))
+      continue;
     const text = parts
-      .flatMap(({ data }) => (data.type === "text" ? [data.text] : []))
+      .flatMap(({ data }) => (data.type === "text" || data.type === "custom" ? [data.text] : []))
       .join("\n")
       .trim();
     if (text) lines.push(`${label[message.role] ?? "Notification"}: ${text}`);
