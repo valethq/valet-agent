@@ -301,6 +301,9 @@ describe("http", () => {
     );
     expect(kinds).toEqual({ "fake-agent": "agent", "fake-model": "model", "fake-bad": "model" });
     expect(body.providers[0].models.map((m: { id: string }) => m.id)).toEqual(["m1", "m2"]);
+    expect(body.providers[0]).toMatchObject({ label: "Fake agent", icon: "cursor" });
+    expect(body.providers[1].label).toBe("Fake model");
+    expect("icon" in body.providers[1]).toBe(false);
     expect((await fetch(`${k.base}/plugins/valet-agent/models`)).status).toBe(401);
   });
 

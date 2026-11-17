@@ -26,6 +26,12 @@ const bodyOf = async (req: Request): Promise<Record<string, unknown>> => {
   return typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
 };
 
+// Read loosely: @valethq/sdk 0.2.0 has no `icon` yet, and a plugin may set anything.
+const iconOf = (impl: object): { icon?: string } => {
+  const icon = (impl as { icon?: unknown }).icon;
+  return typeof icon === "string" && icon !== "" ? { icon } : {};
+};
+
 export function registerHttp(env: Env, queue: RunQueue): void {
   const { ctx } = env;
 
@@ -35,10 +41,11 @@ export function registerHttp(env: Env, queue: RunQueue): void {
     ownerOnly(async () => {
       const providers = await Promise.all(
         ctx.scopes.all("inference").map(async ({ key, impl }) => {
+          const head = { provider: key, kind: impl.kind, label: impl.label, ...iconOf(impl) };
           try {
-            return { provider: key, kind: impl.kind, models: await impl.listModels() };
+            return { ...head, models: await impl.listModels() };
           } catch (error) {
-            return { provider: key, kind: impl.kind, models: [], error: String(error) };
+            return { ...head, models: [], error: String(error) };
           }
         }),
       );

@@ -50,6 +50,7 @@ export default definePlugin({
         id: "fake-agent",
         kind: "agent",
         label: "Fake agent",
+        ...{ icon: "cursor" }, // spread: @valethq/sdk 0.2.0 has no icon field yet
         listModels: async () => models,
         async open(opts) {
           log.push({
