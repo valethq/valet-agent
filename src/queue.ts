@@ -1,6 +1,5 @@
 import type { Env } from "./env";
 import { type Active, execute, type Job } from "./runner";
-import { defaultQueueMode } from "./settings";
 
 export interface Finished {
   sessionId: string;
@@ -29,7 +28,7 @@ export class RunQueue {
     const settings = this.#env.ctx.store.sessions.get(job.sessionId)?.settings.agent as
       | { queueMode?: string }
       | undefined;
-    const queueMode = settings?.queueMode ?? defaultQueueMode(this.#env.ctx);
+    const queueMode = settings?.queueMode ?? this.#env.ctx.config.defaultQueueMode ?? "queue";
     if (queueMode === "interrupt" && queue.active) {
       queue.pending.unshift(job);
       void this.cancelActive(job.sessionId, this.#env.ctx.plugin.id);

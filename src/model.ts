@@ -1,37 +1,44 @@
-import type { PluginContext, Project, Session } from "@valethq/sdk";
+import type { ModelRef, Project, Session } from "@valethq/sdk";
+import type { CatalogRow } from "./catalog";
 
-export interface ModelRef {
-  provider: string;
-  model: string;
-}
+export type { ModelRef };
+
 export interface ResolvedModel extends ModelRef {
   fallbacks: ModelRef[];
 }
+
+/** valet-agent's config; core fills in the manifest's defaults (12.1). */
 export interface AgentConfig {
-  defaultModel?: ModelRef;
+  defaultModel?: ModelRef & { fallbacks?: ModelRef[] };
+  /** The model catalog's rows (11.1). */
+  models?: CatalogRow[];
+  /** Used when a session sets no agent.queueMode. */
+  defaultQueueMode?: "queue" | "interrupt";
   /** Tool names agent providers may see. Unset exposes every tools@1 tool the run's role allows. */
   exposedTools?: string[];
-  /** Whether the present tool is limited to the project workspace plus presentRoots. Default true; the settings panel overrides it. */
+  /** Whether the present tool is limited to the project workspace plus presentRoots. */
   presentConfine?: boolean;
-  /** Directories besides the project workspace that the present tool may read from. The settings panel overrides it. */
+  /** Directories besides the project workspace that the present tool may read from. */
   presentRoots?: string[];
 }
 
-export const DEFAULT_MODEL: ModelRef = { provider: "devin-cli", model: "claude-opus-5-5-medium" };
-
-/** Config with the settings-panel override applied; kv wins over config.json. */
-export function configFor(ctx: PluginContext<AgentConfig>): AgentConfig {
-  const m = ctx.storage.kv.get<ModelRef>("defaultModel");
-  return isModelRef(m)
-    ? { ...ctx.config, defaultModel: { provider: m.provider, model: m.model } }
-    : ctx.config;
-}
+export const DEFAULT_MODEL: ModelRef = { provider: "devin-cli", model: "claude-opus-5-5", effort: "medium" };
 
 export const isModelRef = (v: unknown): v is ModelRef & { fallbacks?: unknown } =>
   typeof v === "object" &&
   v !== null &&
   typeof (v as ModelRef).provider === "string" &&
   typeof (v as ModelRef).model === "string";
+
+/** Just the ref's own fields, so stray keys never reach a provider. */
+export function refOf(v: ModelRef): ModelRef {
+  return {
+    provider: v.provider,
+    model: v.model,
+    ...(typeof v.effort === "string" ? { effort: v.effort } : {}),
+    ...(typeof v.fast === "boolean" ? { fast: v.fast } : {}),
+  };
+}
 
 export function resolveModel(
   session: Session,
@@ -41,9 +48,27 @@ export function resolveModel(
   const chosen = [session.settings.model, project?.settings.model, config.defaultModel].find(isModelRef);
   if (!chosen) return { ...DEFAULT_MODEL, fallbacks: [] };
   const fallbacks = Array.isArray(chosen.fallbacks) ? chosen.fallbacks.filter(isModelRef) : [];
-  return {
-    provider: chosen.provider,
-    model: chosen.model,
-    fallbacks: fallbacks.map(({ provider, model }) => ({ provider, model })),
-  };
+  return { ...refOf(chosen), fallbacks: fallbacks.map(refOf) };
+}
+
+/** "provider:model" or a bare model on `current`'s provider; undefined when the text names nothing. */
+export function parseRef(
+  text: string,
+  current: ModelRef,
+  hasProvider: (key: string) => boolean,
+): ModelRef | undefined {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const [first, ...rest] = words;
+  if (first === undefined) return undefined;
+  const sep = first.indexOf(":");
+  const ref: ModelRef =
+    sep > 0 && hasProvider(first.slice(0, sep))
+      ? { provider: first.slice(0, sep), model: first.slice(sep + 1) }
+      : { provider: current.provider, model: first };
+  for (const word of rest) {
+    if (word === "fast") ref.fast = true;
+    else if (word === "standard" || word === "slow") ref.fast = false;
+    else ref.effort = word;
+  }
+  return ref;
 }

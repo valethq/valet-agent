@@ -2,6 +2,7 @@ import type { AgentProvider, ModelInfo } from "@valethq/sdk";
 import { CompactionRecorder, compactionNote, harnessCompactions } from "./compactions";
 import type { Env } from "./env";
 import { historyNote } from "./history";
+import { runOptions } from "./catalog";
 import type { ModelRef } from "./model";
 import type { Outcome, RunCtx } from "./run-types";
 
@@ -29,7 +30,7 @@ async function promptAgent(
   info: ModelInfo,
 ): Promise<Outcome> {
   const { ctx } = env;
-  const entry = await env.agents.acquire(provider, rc.sessionId, rc.cwd, cand.model);
+  const entry = await env.agents.acquire(provider, rc.sessionId, rc.cwd, cand.model, runOptions(cand, info));
   const preamble = entry.needsPreamble
     ? await ctx.scopes.get("context").preamble({
         sessionId: rc.sessionId,

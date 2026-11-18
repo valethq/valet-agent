@@ -1,8 +1,8 @@
-import type { Message, ModelInfo, Part, Role, Run } from "@valethq/sdk";
+import type { Message, Part, Role, Run } from "@valethq/sdk";
 import { runAgent } from "./agent-run";
 import { toContent } from "./content";
 import type { Env } from "./env";
-import { configFor, type ModelRef, resolveModel } from "./model";
+import { type ModelRef, refOf, resolveModel } from "./model";
 import { runModel } from "./model-run";
 import { PartStream } from "./parts";
 import type { Outcome, RunCtx } from "./run-types";
@@ -37,18 +37,10 @@ async function attempt(
 ): Promise<Outcome> {
   const provider = env.ctx.scopes.maybe("inference", cand.provider);
   if (!provider) return { status: "error", error: `no inference provider "${cand.provider}"` };
-  used.value = { provider: cand.provider, model: cand.model };
+  used.value = refOf(cand);
   rc.store.runs.update(rc.runId, { provider: cand.provider, model: cand.model });
   try {
-    const models = await provider.listModels().catch(() => [] as ModelInfo[]);
-    const info = models.find((m) => m.id === cand.model) ?? {
-      id: cand.model,
-      name: cand.model,
-      contextWindow: 0,
-      maxOutputTokens: 0,
-      input: ["text" as const],
-      reasoning: false,
-    };
+    const info = await env.catalog.info(cand);
     contextWindow.value = info.contextWindow || undefined;
     const outcome =
       provider.kind === "agent"
@@ -124,7 +116,11 @@ export async function execute(env: Env, job: Job, active: Active): Promise<void>
     },
   };
 
-  const setting = resolveModel(session, project, configFor(ctx));
+  const resolved = resolveModel(session, project, ctx.config);
+  const setting = {
+    ...env.catalog.normalize(resolved),
+    fallbacks: resolved.fallbacks.map((f) => env.catalog.normalize(f)),
+  };
   const failures: { cand: ModelRef; error: string }[] = [];
   let outcome: Outcome = { status: "error", error: "no model candidates" };
   try {

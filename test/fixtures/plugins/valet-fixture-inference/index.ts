@@ -7,14 +7,12 @@ import {
   type ModelInfo,
 } from "@valethq/sdk";
 
-const models: ModelInfo[] = ["m1", "m2"].map((id) => ({
-  id,
-  name: id,
-  contextWindow: 1000,
-  maxOutputTokens: 100,
-  input: ["text"],
-  reasoning: false,
-}));
+const base = { contextWindow: 1000, maxOutputTokens: 100, input: ["text" as const], reasoning: false };
+const models: ModelInfo[] = [
+  { id: "m1", name: "m1", ...base, efforts: ["low", "high"], defaultEffort: "low", fast: true },
+  { id: "m2", name: "m2", ...base },
+  { id: "m3", name: "M3 preview", ...base, hidden: true },
+];
 
 const textOf = (content: ModelContent[]): string =>
   content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
@@ -50,7 +48,7 @@ export default definePlugin({
         id: "fake-agent",
         kind: "agent",
         label: "Fake agent",
-        ...{ icon: "cursor" }, // spread: @valethq/sdk 0.2.0 has no icon field yet
+        icon: "cursor",
         listModels: async () => models,
         async open(opts) {
           log.push({
@@ -58,6 +56,8 @@ export default definePlugin({
             resumeId: opts.resumeId ?? null,
             model: opts.model,
             tools: opts.tools.list().length,
+            ...(opts.effort === undefined ? {} : { effort: opts.effort }),
+            ...(opts.fast === undefined ? {} : { fast: opts.fast }),
           });
           surface = opts.tools;
           return {
@@ -127,8 +127,8 @@ export default definePlugin({
               yield { type: "usage", contextTokens: 100, inputTokens: 90, outputTokens: 10 };
               yield { type: "finish", reason: "stop" };
             },
-            async setModel(model) {
-              log.push({ op: "setModel", model });
+            async setModel(model, options) {
+              log.push({ op: "setModel", model, ...options });
             },
             async close() {},
           };
@@ -145,6 +145,7 @@ export default definePlugin({
         label: "Fake model",
         listModels: async () => models,
         async *stream(req, signal): AsyncIterable<InferenceChunk> {
+          log.push({ op: "stream", model: req.model, effort: req.effort ?? null, fast: req.fast ?? null });
           const last = req.messages.at(-1);
           if (last?.role === "tool") {
             yield { type: "text-delta", text: `done: ${textOf(last.content)}` };

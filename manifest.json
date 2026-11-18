@@ -3,10 +3,107 @@
   "id": "valet-agent",
   "name": "Agent",
   "version": "0.1.0",
-  "description": "Run queue, provider bridging, fallbacks and slash commands.",
+  "description": "Run queue, provider bridging, fallbacks, slash commands and the model catalog.",
   "valet": "^0.1.0",
   "main": "./src/index.ts",
-  "provides": ["settings@1"],
   "requires": ["inference@1", "context@1"],
-  "optionalRequires": ["tools@1"]
+  "optionalRequires": ["tools@1"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "x-group": "system",
+    "x-icon": "bot",
+    "x-order": 0,
+    "x-pages": {
+      "models": {
+        "title": "Models",
+        "description": "Every model your providers offer, plus the ones you add. Turn models off to keep them out of the picker, or rename them and fix their limits.",
+        "group": "models",
+        "icon": "sparkles",
+        "order": 0
+      }
+    },
+    "properties": {
+      "defaultModel": {
+        "type": "object",
+        "title": "Default model",
+        "description": "For sessions and projects that don't pick one.",
+        "x-widget": "model",
+        "x-page": "models",
+        "required": ["provider", "model"],
+        "properties": {
+          "provider": { "type": "string" },
+          "model": { "type": "string" },
+          "effort": { "type": "string" },
+          "fast": { "type": "boolean" },
+          "fallbacks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["provider", "model"],
+              "properties": {
+                "provider": { "type": "string" },
+                "model": { "type": "string" },
+                "effort": { "type": "string" },
+                "fast": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      },
+      "models": {
+        "type": "array",
+        "title": "Model list",
+        "x-widget": "models",
+        "x-page": "models",
+        "default": [],
+        "items": {
+          "type": "object",
+          "required": ["provider", "id"],
+          "additionalProperties": false,
+          "properties": {
+            "provider": { "type": "string", "title": "Provider" },
+            "id": { "type": "string", "title": "Model id", "minLength": 1 },
+            "show": { "type": "boolean", "title": "In the picker" },
+            "name": { "type": "string", "title": "Name" },
+            "contextWindow": { "type": "integer", "title": "Context window", "minimum": 1 },
+            "maxOutputTokens": { "type": "integer", "title": "Max output", "minimum": 1 },
+            "efforts": { "type": "array", "title": "Efforts", "items": { "type": "string" } },
+            "defaultEffort": { "type": "string", "title": "Default effort" },
+            "fast": { "type": "boolean", "title": "Fast mode" },
+            "custom": { "type": "boolean", "title": "Added by hand" }
+          }
+        }
+      },
+      "defaultQueueMode": {
+        "type": "string",
+        "title": "When you send during a turn",
+        "description": "Queue waits for the running turn. Interrupt stops it and answers the new message. Sessions can override this.",
+        "enum": ["queue", "interrupt"],
+        "enumNames": ["Queue", "Interrupt"],
+        "x-widget": "segmented",
+        "default": "queue"
+      },
+      "presentConfine": {
+        "type": "boolean",
+        "title": "Confine present to the workspace",
+        "description": "The present tool shares files only from the project workspace and the folders below. Off lets it share any path valet can read, and limits it to owner runs.",
+        "default": true
+      },
+      "presentRoots": {
+        "type": "array",
+        "title": "Extra present folders",
+        "description": "Absolute folders present may also read from while it is confined.",
+        "items": { "type": "string" },
+        "default": []
+      },
+      "exposedTools": {
+        "type": "array",
+        "title": "Tools for agent harnesses",
+        "description": "Tool names harnesses like Claude Code and Devin may see. Unset offers every tool the run's role allows.",
+        "items": { "type": "string" },
+        "x-advanced": true
+      }
+    }
+  }
 }

@@ -1,6 +1,7 @@
 import type { Session, SessionSettings, Store, ToolDefinition, ToolResult } from "@valethq/sdk";
 import type { AgentCtx } from "./env";
-import { configFor, type ModelRef, resolveModel } from "./model";
+import type { Catalog } from "./catalog";
+import { type ModelRef, parseRef, resolveModel } from "./model";
 import type { Presented } from "./present";
 import type { RunQueue } from "./queue";
 import { roleAtLeast } from "./role";
@@ -134,7 +135,11 @@ function outcomeText(outcomes: Outcome[]): string {
  * Starts or continues child sessions (parentSessionId = this chat), runs one turn in each with this run's role,
  * and returns their replies. Tasks in the same stage run at once; stages run in ascending order.
  */
-export function subagentTool(ctx: AgentCtx, queue: RunQueue): ToolDefinition<{ tasks?: unknown }> {
+export function subagentTool(
+  ctx: AgentCtx,
+  queue: RunQueue,
+  catalog: Catalog,
+): ToolDefinition<{ tasks?: unknown }> {
   return {
     name: "subagent",
     description:
@@ -170,7 +175,7 @@ export function subagentTool(ctx: AgentCtx, queue: RunQueue): ToolDefinition<{ t
               model: {
                 type: "string",
                 description:
-                  'Model for a new subagent, "model" or "provider:model". Defaults to this chat\'s.',
+                  'Model for a new subagent: "model" or "provider:model", optionally followed by an effort and "fast", e.g. "claude-code:claude-opus-5-5 high". Defaults to this chat\'s.',
               },
             },
             required: ["prompt"],
@@ -195,15 +200,12 @@ export function subagentTool(ctx: AgentCtx, queue: RunQueue): ToolDefinition<{ t
       const author = call.caller.actor?.principalId;
       const store =
         author && ctx.store.principals.get(author) ? ctx.store.as({ principalId: author }) : ctx.store;
-      const current = resolveModel(parent, ctx.store.projects.get(parent.projectId), configFor(ctx));
+      const current = resolveModel(parent, ctx.store.projects.get(parent.projectId), ctx.config);
 
       const modelOf = (task: Task): ModelRef | undefined => {
         if (task.model === undefined) return undefined;
-        const sep = task.model.indexOf(":");
-        const explicit = sep > 0 && ctx.scopes.maybe("inference", task.model.slice(0, sep)) !== undefined;
-        return explicit
-          ? { provider: task.model.slice(0, sep), model: task.model.slice(sep + 1) }
-          : { provider: current.provider, model: task.model };
+        const ref = parseRef(task.model, current, (key) => ctx.scopes.maybe("inference", key) !== undefined);
+        return ref && catalog.normalize(ref);
       };
 
       const open = async (task: Task): Promise<Session | string> => {

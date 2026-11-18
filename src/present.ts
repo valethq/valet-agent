@@ -3,7 +3,6 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { Role, ToolDefinition, ToolResult } from "@valethq/sdk";
 import type { AgentCtx } from "./env";
 import { roleAtLeast } from "./role";
-import { presentConfined, presentRoots } from "./settings";
 
 export interface Presented {
   blobId: string;
@@ -44,7 +43,7 @@ export function presentedOf(result: ToolResult): Presented[] {
 }
 
 export function presentTool(ctx: AgentCtx): ToolDefinition<{ path?: unknown; name?: unknown }> {
-  const confined = presentConfined(ctx);
+  const confined = ctx.config.presentConfine !== false;
   const minRole: Role = confined ? "trusted" : "owner";
   return {
     name: "present",
@@ -69,7 +68,9 @@ export function presentTool(ctx: AgentCtx): ToolDefinition<{ path?: unknown; nam
       if (!target) return failure(`not found: ${input.path}`);
       if (confined) {
         const roots = await Promise.all(
-          [call.cwd, ...presentRoots(ctx)].map((r) => realpath(r).catch(() => undefined)),
+          [call.cwd, ...(ctx.config.presentRoots ?? []).filter((r) => r !== "")].map((r) =>
+            realpath(r).catch(() => undefined),
+          ),
         );
         if (!roots.some((r) => r !== undefined && inside(r, target)))
           return failure(`${input.path} is outside the workspace`);

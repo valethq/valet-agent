@@ -1,3 +1,4 @@
+import { runOptions } from "./catalog";
 import type { ModelContent, ModelInfo, ModelMessage, ModelProvider, ToolDefinition } from "@valethq/sdk";
 import { autoCompact } from "./compactions";
 import type { Env } from "./env";
@@ -88,7 +89,7 @@ export async function runModel(
     const calls: Call[] = [];
     let text = "";
     let finish: { reason: string; error?: string } | undefined;
-    const req = { model: cand.model, system: built.system, messages, tools, meta };
+    const req = { model: cand.model, ...runOptions(cand, info), system: built.system, messages, tools, meta };
     for await (const chunk of provider.stream(req, rc.signal)) {
       if (rc.signal.aborted) return { status: "cancelled" };
       switch (chunk.type) {
@@ -119,7 +120,7 @@ export async function runModel(
       return { status: "error", error: finish?.error ?? "stream ended without a finish chunk" };
     }
     if (calls.length === 0) {
-      await autoCompact(env, provider, info, rc, contextTokens);
+      await autoCompact(env, provider, cand, info, rc, contextTokens);
       return { status: "stop" };
     }
     const content: ModelContent[] = [

@@ -198,7 +198,7 @@ describe("agent kind", () => {
     const res = await send(id, "/model fake-agent:m2");
     expect(res.status).toBe(409);
     const [, reply] = await done(id, 2);
-    expect(textOf(reply as Entry)).toBe("Model set to m2.");
+    expect(textOf(reply as Entry)).toBe("Model set to fake-agent:m2.");
     expect((await k.api(`/api/core/sessions/${id}`)).body.settings.model).toEqual({
       provider: "fake-agent",
       model: "m2",
@@ -292,6 +292,110 @@ describe("titles", () => {
   });
 });
 
+describe("model options and the catalog", () => {
+  const setCatalog = (models: unknown[]) =>
+    k.api("/api/core/settings/valet-agent", { method: "PATCH", body: { config: { models } } });
+
+  test("effort and fast mode reach an agent provider on open and on setModel", async () => {
+    const id = await newSession({
+      model: { provider: "fake-agent", model: "m1", effort: "high", fast: true },
+    });
+    await send(id, "hi");
+    await done(id, 1);
+    expect((await log()).filter((l) => l.op === "open").at(-1)).toMatchObject({
+      model: "m1",
+      effort: "high",
+      fast: true,
+    });
+    const session = (await k.api(`/api/core/sessions/${id}`)).body;
+    await k.api(`/api/core/sessions/${id}`, {
+      method: "PATCH",
+      body: {
+        settings: { ...session.settings, model: { provider: "fake-agent", model: "m1", effort: "low" } },
+      },
+    });
+    await send(id, "again");
+    await done(id, 2);
+    expect(await log()).toContainEqual({ op: "setModel", model: "m1", effort: "low" });
+    const [a] = await assistants(id);
+    expect(a?.message.meta.model).toEqual({
+      provider: "fake-agent",
+      model: "m1",
+      effort: "high",
+      fast: true,
+    });
+  });
+
+  test("options a model lacks are dropped; legacy ids run as model + options", async () => {
+    const plain = await newSession({
+      model: { provider: "fake-model", model: "m2", effort: "max", fast: true },
+    });
+    await send(plain, "hi");
+    await done(plain, 1);
+    expect((await log()).filter((l) => l.op === "stream").at(-1)).toEqual({
+      op: "stream",
+      model: "m2",
+      effort: null,
+      fast: null,
+    });
+    const legacy = await newSession({ model: { provider: "fake-model", model: "m1-high-fast" } });
+    await send(legacy, "hi");
+    await done(legacy, 1);
+    expect((await log()).filter((l) => l.op === "stream").at(-1)).toEqual({
+      op: "stream",
+      model: "m1",
+      effort: "high",
+      fast: true,
+    });
+    expect((await state(legacy)).model).toMatchObject({ model: "m1", effort: "high", fast: true });
+  });
+
+  test("catalog rows from settings: overrides, allowlist and custom models", async () => {
+    expect(
+      (
+        await setCatalog([
+          { provider: "fake-model", id: "*", show: false },
+          { provider: "fake-model", id: "m1", show: true, name: "Model One", contextWindow: 4242 },
+          { provider: "fake-model", id: "c1", custom: true, name: "Custom" },
+        ])
+      ).status,
+    ).toBe(200);
+    const { body } = await k.api("/plugins/valet-agent/models");
+    const fm = body.providers.find((p: { provider: string }) => p.provider === "fake-model");
+    expect(fm.models.map((m: { id: string; show: boolean; name: string }) => [m.id, m.show, m.name])).toEqual(
+      [
+        ["m1", true, "Model One"],
+        ["m2", false, "m2"],
+        ["m3", false, "M3 preview"],
+        ["c1", true, "Custom"],
+      ],
+    );
+    const id = await newSession({ model: { provider: "fake-model", model: "c1" } });
+    await send(id, "hi");
+    await done(id, 1);
+    expect((await log()).filter((l) => l.op === "stream").at(-1)?.model).toBe("c1");
+    const usage = await waitFor(async () => {
+      const [a] = await assistants(id);
+      const run = (await k.api(`/api/core/runs/${a?.message.runId}`)).body;
+      return run.status === "complete" && run;
+    });
+    expect(usage.model).toBe("c1");
+    expect((await setCatalog([])).status).toBe(200);
+  });
+
+  test("/model takes effort and speed words", async () => {
+    const id = await newSession({ model: { provider: "fake-agent", model: "m2" } });
+    await send(id, "/model fake-agent:m1 high fast");
+    await waitFor(async () => (await k.api(`/api/core/sessions/${id}`)).body.settings.model?.model === "m1");
+    expect((await k.api(`/api/core/sessions/${id}`)).body.settings.model).toEqual({
+      provider: "fake-agent",
+      model: "m1",
+      effort: "high",
+      fast: true,
+    });
+  });
+});
+
 describe("http", () => {
   test("/models aggregates providers and is owner only", async () => {
     const { status, body } = await k.api("/plugins/valet-agent/models");
@@ -300,7 +404,11 @@ describe("http", () => {
       body.providers.map((p: { provider: string; kind: string }) => [p.provider, p.kind]),
     );
     expect(kinds).toEqual({ "fake-agent": "agent", "fake-model": "model", "fake-bad": "model" });
-    expect(body.providers[0].models.map((m: { id: string }) => m.id)).toEqual(["m1", "m2"]);
+    expect(body.providers[0].models.map((m: { id: string; show: boolean }) => [m.id, m.show])).toEqual([
+      ["m1", true],
+      ["m2", true],
+      ["m3", false],
+    ]);
     expect(body.providers[0]).toMatchObject({ label: "Fake agent", icon: "cursor" });
     expect(body.providers[1].label).toBe("Fake model");
     expect("icon" in body.providers[1]).toBe(false);
@@ -346,6 +454,54 @@ describe("restart", () => {
       expect(a?.message.status).toBe("interrupted");
       expect(a?.parts.map((p) => p.status)).toEqual(["interrupted"]);
       await waitFor(async () => (await second.api(`/api/core/sessions/${session}`)).body.status === "idle");
+    } finally {
+      await second.stop();
+    }
+  });
+  test("boot rewrites legacy model ids in sessions and projects once", async () => {
+    const first = await startKernel();
+    const home = first.home;
+    const project = (
+      await first.api("/api/core/projects", {
+        method: "POST",
+        body: {
+          name: "p",
+          workspaceDir: home,
+          settings: { model: { provider: "fake-agent", model: "m1-low" } },
+        },
+      })
+    ).body.id;
+    const legacy = {
+      provider: "fake-agent",
+      model: "m1-high-fast",
+      fallbacks: [{ provider: "fake-model", model: "m1-low" }],
+    };
+    const session = (
+      await first.api("/api/core/sessions", {
+        method: "POST",
+        body: { projectId: project, settings: { model: legacy } },
+      })
+    ).body.id;
+    await first.stop();
+
+    const second = await startKernel(home);
+    try {
+      const model = await waitFor(async () => {
+        const m = (await second.api(`/api/core/sessions/${session}`)).body.settings.model;
+        return m.model === "m1" && m;
+      });
+      expect(model).toEqual({
+        provider: "fake-agent",
+        model: "m1",
+        effort: "high",
+        fast: true,
+        fallbacks: [{ provider: "fake-model", model: "m1", effort: "low" }],
+      });
+      expect((await second.api(`/api/core/projects`)).body[0].settings.model).toEqual({
+        provider: "fake-agent",
+        model: "m1",
+        effort: "low",
+      });
     } finally {
       await second.stop();
     }

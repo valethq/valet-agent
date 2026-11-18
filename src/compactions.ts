@@ -1,4 +1,13 @@
-import type { AgentProvider, ModelContent, ModelInfo, ModelProvider, Store } from "@valethq/sdk";
+import type {
+  AgentProvider,
+  ModelContent,
+  ModelInfo,
+  ModelOptions,
+  ModelProvider,
+  ModelRef,
+  Store,
+} from "@valethq/sdk";
+import { runOptions } from "./catalog";
 import type { Env } from "./env";
 import type { RunCtx } from "./run-types";
 
@@ -61,6 +70,7 @@ export class CompactionRecorder {
 async function summarize(
   provider: ModelProvider,
   model: string,
+  options: ModelOptions,
   sessionId: string,
   transcript: string,
   signal: AbortSignal,
@@ -68,6 +78,7 @@ async function summarize(
   let text = "";
   const req = {
     model,
+    ...options,
     system: SUMMARY_SYSTEM,
     messages: [{ role: "user" as const, content: [{ type: "text" as const, text: transcript }] }],
     tools: [],
@@ -85,7 +96,8 @@ async function summarize(
 export function compactWithValet(
   env: Env,
   provider: ModelProvider,
-  model: string,
+  ref: ModelRef,
+  info: ModelInfo,
   sessionId: string,
   reason: "auto" | "manual",
   signal: AbortSignal,
@@ -93,7 +105,8 @@ export function compactWithValet(
   return env.ctx.scopes.get("context").compact({
     sessionId,
     reason,
-    summarize: (transcript) => summarize(provider, model, sessionId, transcript, signal),
+    summarize: (transcript) =>
+      summarize(provider, ref.model, runOptions(ref, info), sessionId, transcript, signal),
   });
 }
 
@@ -101,6 +114,7 @@ export function compactWithValet(
 export async function autoCompact(
   env: Env,
   provider: ModelProvider,
+  ref: ModelRef,
   info: ModelInfo,
   rc: RunCtx,
   contextTokens: number,
@@ -110,7 +124,7 @@ export async function autoCompact(
     .shouldCompact({ sessionId: rc.sessionId, model: info, lastUsage: { contextTokens } });
   if (!shouldCompact) return;
   try {
-    await compactWithValet(env, provider, info.id, rc.sessionId, "auto", rc.signal);
+    await compactWithValet(env, provider, ref, info, rc.sessionId, "auto", rc.signal);
   } catch (error) {
     rc.parts.notice(
       "warn",
@@ -123,12 +137,13 @@ export async function autoCompact(
 export async function compactHarness(
   env: Env,
   provider: AgentProvider,
-  model: string,
+  ref: ModelRef,
+  info: ModelInfo,
   sessionId: string,
   cwd: string,
   instructions: string | undefined,
 ): Promise<string | undefined> {
-  const entry = await env.agents.acquire(provider, sessionId, cwd, model);
+  const entry = await env.agents.acquire(provider, sessionId, cwd, ref.model, runOptions(ref, info));
   const session = entry.session;
   if (!session.compact)
     return `${provider.label} can't be asked to compact. It compacts on its own when it needs to.`;
