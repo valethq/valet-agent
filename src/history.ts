@@ -1,8 +1,23 @@
-import type { ModelContent, Store } from "@valethq/sdk";
+import type { ModelContent, PartData, Store } from "@valethq/sdk";
 import { isNotification } from "./content";
 
 const MAX_CHARS = 60_000;
+const TOOL_OUTPUT_CHARS = 2_000;
 const label: Record<string, string> = { user: "User", assistant: "Assistant" };
+
+const clip = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max)}…` : text);
+
+const shortJson = (value: unknown): string => {
+  try {
+    return JSON.stringify(value ?? null) ?? "null";
+  } catch {
+    return "null";
+  }
+};
+
+// spec-gap: the reseed transcript has no defined shape for a tool-only turn.
+const toolLine = (data: Extract<PartData, { type: "tool-call" }>): string =>
+  `[tool ${data.name} ${shortJson(data.input)}: ${clip(data.output ?? "", TOOL_OUTPUT_CHARS)}]`;
 
 /**
  * The chat before `beforeSeq` as one text block, for a harness session that starts fresh in a chat that already has
@@ -21,7 +36,11 @@ export function historyNote(store: Store, sessionId: string, beforeSeq: number):
     if (message.role !== "user" && message.role !== "assistant" && !isNotification(store, message, parts))
       continue;
     const text = parts
-      .flatMap(({ data }) => (data.type === "text" || data.type === "custom" ? [data.text] : []))
+      .flatMap(({ data }) => {
+        if (data.type === "text" || data.type === "custom") return [data.text];
+        if (data.type === "tool-call") return [toolLine(data)];
+        return [];
+      })
       .join("\n")
       .trim();
     if (text) lines.push(`${label[message.role] ?? "Notification"}: ${text}`);

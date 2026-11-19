@@ -1,4 +1,4 @@
-import type { Message, Part, Role, Run } from "@valethq/sdk";
+import type { Message, Part, Role, Run, Store } from "@valethq/sdk";
 import { runAgent } from "./agent-run";
 import { toContent } from "./content";
 import type { Env } from "./env";
@@ -16,6 +16,8 @@ export interface Job {
 export interface Active {
   controller: AbortController;
   runId?: string;
+  /** The user message this job is answering. */
+  messageId: string;
 }
 
 type Ending = { message: "complete" | "error" | "interrupted"; run: Run["status"] };
@@ -27,6 +29,33 @@ const ENDINGS: Record<Outcome["status"] | "interrupted", Ending> = {
 };
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+// spec-gap: a throw after the model loop still has to leave the run and its assistant message terminal.
+async function recover(
+  store: Store,
+  sessionId: string,
+  runId: string,
+  parts: PartStream,
+  messageId: string | undefined,
+  status: "error" | "interrupted",
+  error: string,
+): Promise<void> {
+  const id = messageId ?? (await parts.finish().catch(() => undefined));
+  const entries = store.messages.list(sessionId);
+  const entry =
+    (id !== undefined ? entries.find((e) => e.message.id === id) : undefined) ??
+    entries.find(
+      (e) => e.message.role === "assistant" && e.message.runId === runId && e.message.status === "streaming",
+    );
+  const target = id ?? entry?.message.id;
+  if (target !== undefined && (entry === undefined || entry.message.status === "streaming")) {
+    const other = status === "error" ? "interrupted" : "error";
+    await store.messages
+      .complete(target, status)
+      .catch(() => store.messages.complete(target, other).catch(() => {}));
+  }
+  if (store.runs.get(runId)?.status === "running") store.runs.update(runId, { status: "error", error });
+}
 
 async function attempt(
   env: Env,
@@ -116,14 +145,14 @@ export async function execute(env: Env, job: Job, active: Active): Promise<void>
     },
   };
 
-  const resolved = resolveModel(session, project, ctx.config);
-  const setting = {
-    ...env.catalog.normalize(resolved),
-    fallbacks: resolved.fallbacks.map((f) => env.catalog.normalize(f)),
-  };
   const failures: { cand: ModelRef; error: string }[] = [];
   let outcome: Outcome = { status: "error", error: "no model candidates" };
   try {
+    const resolved = resolveModel(session, project, ctx.config);
+    const setting = {
+      ...env.catalog.normalize(resolved),
+      fallbacks: resolved.fallbacks.map((f) => env.catalog.normalize(f)),
+    };
     for (const cand of [setting, ...setting.fallbacks]) {
       if (signal.aborted) {
         outcome = { status: "cancelled" };
@@ -139,24 +168,30 @@ export async function execute(env: Env, job: Job, active: Active): Promise<void>
   }
 
   const ended = ctx.signal.aborted ? ENDINGS.interrupted : ENDINGS[outcome.status];
-  if (ended.message === "error" && !parts.output && outcome.status === "error") {
-    parts.notice("error", outcome.error);
-  } else if (ended.message === "complete" && failures.length > 0 && used.value) {
-    const failed = failures.map((f) => `${f.cand.provider}:${f.cand.model} failed: ${f.error}`).join("; ");
-    parts.notice("warn", `${failed}; used ${used.value.provider}:${used.value.model}`);
-  }
-  parts.closeAll(ended.message);
-  const messageId = await parts.finish();
-  if (messageId === undefined) {
-    if (store.runs.get(run.id)?.status === "running")
-      store.runs.update(run.id, { status: "error", error: createError });
-    return;
-  }
-  await store.messages.complete(messageId, ended.message);
-  if (store.runs.get(run.id)?.status === "running") {
-    store.runs.update(run.id, {
-      status: ended.run,
-      ...(outcome.status === "error" ? { error: outcome.error } : {}),
-    });
+  let messageId: string | undefined;
+  try {
+    if (ended.message === "error" && !parts.output && outcome.status === "error") {
+      parts.notice("error", outcome.error);
+    } else if (ended.message === "complete" && failures.length > 0 && used.value) {
+      const failed = failures.map((f) => `${f.cand.provider}:${f.cand.model} failed: ${f.error}`).join("; ");
+      parts.notice("warn", `${failed}; used ${used.value.provider}:${used.value.model}`);
+    }
+    parts.closeAll(ended.message);
+    messageId = await parts.finish();
+    if (messageId === undefined) {
+      if (store.runs.get(run.id)?.status === "running")
+        store.runs.update(run.id, { status: "error", error: createError });
+      return;
+    }
+    await store.messages.complete(messageId, ended.message);
+    if (store.runs.get(run.id)?.status === "running") {
+      store.runs.update(run.id, {
+        status: ended.run,
+        ...(outcome.status === "error" ? { error: outcome.error } : {}),
+      });
+    }
+  } catch (error) {
+    const status = ended.message === "interrupted" ? "interrupted" : "error";
+    await recover(store, session.id, run.id, parts, messageId, status, errorText(error));
   }
 }

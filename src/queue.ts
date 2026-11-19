@@ -59,6 +59,22 @@ export class RunQueue {
     for (const job of dropped) for (const fn of this.#listeners) fn({ sessionId, messageId: job.message.id });
   }
 
+  /** The user message the active job is answering, if a job is in progress. */
+  activeMessageId(sessionId: string): string | undefined {
+    return this.#queues.get(sessionId)?.active?.messageId;
+  }
+
+  /** Removes one pending job and notifies listeners. The active run and every other job stay. */
+  dropJob(sessionId: string, messageId: string): boolean {
+    const queue = this.#queues.get(sessionId);
+    if (!queue) return false;
+    const index = queue.pending.findIndex((job) => job.message.id === messageId);
+    if (index < 0) return false;
+    queue.pending.splice(index, 1);
+    for (const fn of this.#listeners) fn({ sessionId, messageId });
+    return true;
+  }
+
   /** Calls `fn` after each job ends, whatever its outcome. Returns the unsubscribe. */
   onFinished(fn: (f: Finished) => void): () => void {
     this.#listeners.add(fn);
@@ -79,7 +95,7 @@ export class RunQueue {
     await this.#setStatus(sessionId, "running");
     try {
       for (let job = queue.pending.shift(); job; job = queue.pending.shift()) {
-        queue.active = { controller: new AbortController() };
+        queue.active = { controller: new AbortController(), messageId: job.message.id };
         try {
           await execute(this.#env, job, queue.active);
         } catch (error) {
