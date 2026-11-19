@@ -25,11 +25,7 @@ export class RunQueue {
   enqueue(job: Job): void {
     const queue = this.#queues.get(job.sessionId) ?? { pending: [], draining: false };
     this.#queues.set(job.sessionId, queue);
-    const settings = this.#env.ctx.store.sessions.get(job.sessionId)?.settings.agent as
-      | { queueMode?: string }
-      | undefined;
-    const queueMode = settings?.queueMode ?? this.#env.ctx.config.defaultQueueMode ?? "queue";
-    if (queueMode === "interrupt" && queue.active) {
+    if (this.#env.ctx.config.queueMode === "interrupt" && queue.active) {
       queue.pending.unshift(job);
       void this.cancelActive(job.sessionId, this.#env.ctx.plugin.id);
     } else queue.pending.push(job);

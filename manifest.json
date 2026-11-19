@@ -75,10 +75,10 @@
           }
         }
       },
-      "defaultQueueMode": {
+      "queueMode": {
         "type": "string",
         "title": "When you send during a turn",
-        "description": "Queue waits for the running turn. Interrupt stops it and answers the new message. Sessions can override this.",
+        "description": "Queue waits for the running turn. Interrupt stops it and answers the new message.",
         "enum": ["queue", "interrupt"],
         "enumNames": ["Queue", "Interrupt"],
         "x-widget": "segmented",

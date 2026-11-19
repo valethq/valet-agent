@@ -12,8 +12,8 @@ export interface AgentConfig {
   defaultModel?: ModelRef & { fallbacks?: ModelRef[] };
   /** The model catalog's rows (11.1). */
   models?: CatalogRow[];
-  /** Used when a session sets no agent.queueMode. */
-  defaultQueueMode?: "queue" | "interrupt";
+  /** What a message sent during a run does, for every session. */
+  queueMode?: "queue" | "interrupt";
   /** Tool names agent providers may see. Unset exposes every tools@1 tool the run's role allows. */
   exposedTools?: string[];
   /** Whether the present tool is limited to the project workspace plus presentRoots. */

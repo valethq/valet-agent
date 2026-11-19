@@ -75,20 +75,19 @@ function depthOf(store: Store, session: Session): number {
   return depth;
 }
 
-/** The child's settings: the parent's model and queue mode, plus which run and stage started it (the UI groups children by run). */
+/** The child's settings: the parent's model, plus which run and stage started it (the UI groups children by run). */
 function childSettings(
   parent: SessionSettings,
   model: ModelRef | undefined,
   runId: string,
   stage: number,
 ): SessionSettings {
-  const { titlePlaceholder: _t, agent, model: parentModel, ...rest } = structuredClone(parent);
-  const queueMode = (agent as { queueMode?: unknown } | undefined)?.queueMode;
+  const { titlePlaceholder: _t, agent: _a, model: parentModel, ...rest } = structuredClone(parent);
   const chosen = model ?? parentModel;
   return {
     ...rest,
     ...(chosen ? { model: chosen } : {}),
-    agent: { ...(typeof queueMode === "string" ? { queueMode } : {}), parentRunId: runId, stage },
+    agent: { parentRunId: runId, stage },
   };
 }
 
