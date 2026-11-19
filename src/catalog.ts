@@ -79,28 +79,52 @@ const EFFORT = /-(none|minimal|low|medium|high|xhigh|max|ultra)$/;
 
 /**
  * A ref from before options (11.1): "claude-opus-5-5-high-fast" over a listed "claude-opus-5-5" becomes that
- * model with effort "high" and fast mode. Anything else comes back unchanged.
+ * model with effort "high" and fast mode. A speed suffix is peeled first and kept when that id is listed
+ * (`plain-high-fast` over `plain-high`), otherwise the effort suffix is peeled too. Anything else is unchanged.
  */
 export function normalizeRef<T extends ModelRef>(ref: T, listed: readonly { id: string }[] | undefined): T {
   if (listed === undefined || listed.some((m) => m.id === ref.model)) return ref;
-  let base = ref.model;
-  const speed = SPEED.exec(base);
-  if (speed) base = base.slice(0, speed.index);
-  const effort = EFFORT.exec(base);
-  if (effort) base = base.slice(0, effort.index);
-  if (base === ref.model || !listed.some((m) => m.id === base)) return ref;
+  const has = (id: string) => listed.some((m) => m.id === id);
+  let model = ref.model;
+  let fast = false;
+  const speed = SPEED.exec(model);
+  if (speed) {
+    model = model.slice(0, speed.index);
+    fast = true;
+    if (has(model)) {
+      return { ...ref, model, ...(ref.fast === undefined ? { fast: true } : {}) };
+    }
+  }
+  const effort = EFFORT.exec(model);
+  if (effort) model = model.slice(0, effort.index);
+  if (!has(model) || model === ref.model) return ref;
   return {
     ...ref,
-    model: base,
+    model,
     ...(effort && ref.effort === undefined ? { effort: effort[1] } : {}),
-    ...(speed && ref.fast === undefined ? { fast: true } : {}),
+    ...(fast && ref.fast === undefined ? { fast: true } : {}),
   };
 }
 
-/** The options a run sends: an effort the model doesn't list and fast mode it lacks are dropped. */
+/**
+ * Options a run sends. An effort the model doesn't list, and fast mode it lacks, are dropped.
+ * Unset effort runs the provider's own `defaultEffort`, so a catalog default is sent only when a row
+ * overrides that value, or the model is custom and the provider has no listing to apply.
+ */
 export function runOptions(ref: ModelRef, info: ModelInfo): { effort?: string; fast?: boolean } {
-  const effort =
-    ref.effort !== undefined && (info.efforts ?? []).includes(ref.effort) ? ref.effort : undefined;
+  const efforts = info.efforts ?? [];
+  const allowed = (effort: string | undefined): effort is string =>
+    effort !== undefined && efforts.includes(effort);
+  const row = info as CatalogModel;
+  const overridden =
+    row.base !== undefined
+      ? info.defaultEffort !== row.base.defaultEffort
+        ? info.defaultEffort
+        : undefined
+      : row.custom === true
+        ? info.defaultEffort
+        : undefined;
+  const effort = allowed(ref.effort) ? ref.effort : allowed(overridden) ? overridden : undefined;
   const fast = info.fast === true ? ref.fast : undefined;
   return { ...(effort === undefined ? {} : { effort }), ...(fast === undefined ? {} : { fast }) };
 }
@@ -154,7 +178,8 @@ export class Catalog {
       : [];
     const found = mergeCatalog(ref.provider, listed, this.#rows()).find((m) => m.id === ref.model);
     if (found) {
-      const { show: _s, custom: _c, base: _b, ...info } = found;
+      // `base` and `custom` stay on so runOptions can tell a row's defaultEffort from the provider's.
+      const { show: _s, ...info } = found;
       return info;
     }
     return {
