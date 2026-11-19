@@ -1,14 +1,17 @@
-import type { AgentProvider, AgentSession } from "@valethq/sdk";
+import type { AgentProvider, AgentSession, ModelOptions } from "@valethq/sdk";
 import type { AgentCtx } from "./env";
 import type { ToolRouter } from "./surface";
 
 export interface AgentEntry {
   providerId: string;
   model: string;
+  options: ModelOptions;
   session: AgentSession;
   needsPreamble: boolean;
   notedCompactions: number;
 }
+
+const sameOptions = (a: ModelOptions, b: ModelOptions): boolean => a.effort === b.effort && a.fast === b.fast;
 
 /** One open AgentSession per valet session, kept for the life of the process. */
 export class AgentSessions {
@@ -21,14 +24,21 @@ export class AgentSessions {
     this.#tools = tools;
   }
 
-  async acquire(provider: AgentProvider, sessionId: string, cwd: string, model: string): Promise<AgentEntry> {
+  async acquire(
+    provider: AgentProvider,
+    sessionId: string,
+    cwd: string,
+    model: string,
+    options: ModelOptions = {},
+  ): Promise<AgentEntry> {
     let reseed = false;
     const existing = this.#entries.get(sessionId);
     if (existing?.providerId === provider.id) {
-      if (existing.model === model) return existing;
+      if (existing.model === model && sameOptions(existing.options, options)) return existing;
       if (existing.session.setModel) {
-        await existing.session.setModel(model);
+        await existing.session.setModel(model, options);
         existing.model = model;
+        existing.options = options;
         return existing;
       }
       reseed = true;
@@ -42,6 +52,7 @@ export class AgentSessions {
       sessionId,
       cwd,
       model,
+      ...options,
       ...(resumeId ? { resumeId } : {}),
       tools: this.#tools.surface(sessionId),
       signal: this.#ctx.signal,
@@ -50,6 +61,7 @@ export class AgentSessions {
     const entry = {
       providerId: provider.id,
       model,
+      options,
       session,
       needsPreamble: session.resumeId !== resumeId,
       notedCompactions: 0,

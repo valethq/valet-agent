@@ -132,6 +132,16 @@ describe("recorder", () => {
   });
 });
 
+const REF = { provider: "p", model: "m" };
+const INFO: ModelInfo = {
+  id: "m",
+  name: "m",
+  contextWindow: 1000,
+  maxOutputTokens: 100,
+  input: ["text"],
+  reasoning: false,
+};
+
 describe("compactHarness", () => {
   const harness = (session: unknown) =>
     ({ ...env, agents: { acquire: async () => ({ session }) } }) as unknown as Env;
@@ -146,14 +156,22 @@ describe("compactHarness", () => {
         yield { type: "finish", reason: "stop" };
       },
     };
-    const reply = await compactHarness(harness(session), provider, "m", "s", "/tmp", "keep the todo list");
+    const reply = await compactHarness(
+      harness(session),
+      provider,
+      REF,
+      INFO,
+      "s",
+      "/tmp",
+      "keep the todo list",
+    );
     expect(reply).toBeUndefined();
     expect(chat[0]).toMatchObject({ status: "completed", by: "Fake agent" });
   });
 
   test("a harness without compact gets a plain refusal, no marker", async () => {
     chat.length = 0;
-    const reply = await compactHarness(harness({}), provider, "m", "s", "/tmp", undefined);
+    const reply = await compactHarness(harness({}), provider, REF, INFO, "s", "/tmp", undefined);
     expect(reply).toBe("Fake agent can't be asked to compact. It compacts on its own when it needs to.");
     expect(chat).toEqual([]);
   });
@@ -165,7 +183,7 @@ describe("compactHarness", () => {
         yield { type: "finish", reason: "error", error: "no such command" };
       },
     };
-    const reply = await compactHarness(harness(session), provider, "m", "s", "/tmp", undefined);
+    const reply = await compactHarness(harness(session), provider, REF, INFO, "s", "/tmp", undefined);
     expect(reply).toBe("Compaction failed: no such command");
     expect(chat[0]).toMatchObject({ status: "failed", error: "no such command" });
   });
@@ -195,9 +213,12 @@ describe("valet compaction", () => {
       },
     } as unknown as Env;
 
-    await compactWithValet(valetEnv, modelProvider, "m1", "s", "manual", new AbortController().signal);
+    const ref = { provider: "p", model: "m1", effort: "high", fast: true };
+    const info = { ...INFO, id: "m1", efforts: ["low", "high"] };
+    await compactWithValet(valetEnv, modelProvider, ref, info, "s", "manual", new AbortController().signal);
     expect(summaries).toEqual(["summary"]);
-    expect(calls[0]?.model).toBe("m1");
+    expect(calls[0]).toMatchObject({ model: "m1", effort: "high" });
+    expect(calls[0]).not.toHaveProperty("fast");
     expect(calls[0]?.messages[0]?.content[0]?.text).toBe("TRANSCRIPT");
   });
 
@@ -220,7 +241,7 @@ describe("valet compaction", () => {
       signal: new AbortController().signal,
       parts: { notice: (_level: string, text: string) => warnings.push(text) },
     } as unknown as RunCtx;
-    await autoCompact(failingEnv, {} as ModelProvider, { id: "m1" } as ModelInfo, runCtx, 900);
+    await autoCompact(failingEnv, {} as ModelProvider, REF, { id: "m1" } as ModelInfo, runCtx, 900);
     expect(warnings).toEqual(["Auto-compaction failed: boom"]);
   });
 });

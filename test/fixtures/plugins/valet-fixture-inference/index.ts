@@ -7,14 +7,12 @@ import {
   type ModelInfo,
 } from "@valethq/sdk";
 
-const models: ModelInfo[] = ["m1", "m2"].map((id) => ({
-  id,
-  name: id,
-  contextWindow: 1000,
-  maxOutputTokens: 100,
-  input: ["text"],
-  reasoning: false,
-}));
+const base = { contextWindow: 1000, maxOutputTokens: 100, input: ["text" as const], reasoning: false };
+const models: ModelInfo[] = [
+  { id: "m1", name: "m1", ...base, efforts: ["low", "high"], defaultEffort: "low", fast: true },
+  { id: "m2", name: "m2", ...base },
+  { id: "m3", name: "M3 preview", ...base, hidden: true },
+];
 
 const textOf = (content: ModelContent[]): string =>
   content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
@@ -28,6 +26,28 @@ const untilAborted = (signal: AbortSignal): Promise<void> =>
 export default definePlugin({
   activate(ctx) {
     const log: Record<string, unknown>[] = [];
+    const gates = new Map<string, { promise: Promise<void>; open(): void }>();
+    const gate = (name: string) => {
+      let g = gates.get(name);
+      if (!g) {
+        let open = () => {};
+        const promise = new Promise<void>((resolve) => {
+          open = resolve;
+        });
+        g = { promise, open };
+        gates.set(name, g);
+      }
+      return g;
+    };
+    ctx.http.route(
+      "POST",
+      "/gate/:name",
+      (_req, { params }) => {
+        gate(params.name ?? "").open();
+        return Response.json({ ok: true });
+      },
+      { public: true },
+    );
     let surface: AgentOpenOptions["tools"] | undefined;
     ctx.http.route(
       "POST",
@@ -50,6 +70,7 @@ export default definePlugin({
         id: "fake-agent",
         kind: "agent",
         label: "Fake agent",
+        icon: "cursor",
         listModels: async () => models,
         async open(opts) {
           log.push({
@@ -57,6 +78,8 @@ export default definePlugin({
             resumeId: opts.resumeId ?? null,
             model: opts.model,
             tools: opts.tools.list().length,
+            ...(opts.effort === undefined ? {} : { effort: opts.effort }),
+            ...(opts.fast === undefined ? {} : { fast: opts.fast }),
           });
           surface = opts.tools;
           return {
@@ -83,8 +106,9 @@ export default definePlugin({
                 return;
               }
               if (text.startsWith("sub ")) {
-                const tasks = JSON.parse(text.slice("sub ".length));
-                const result = await opts.tools.call("subagent", { tasks }, { callId: "s1", signal });
+                const parsed = JSON.parse(text.slice("sub ".length));
+                const input = Array.isArray(parsed) ? { tasks: parsed } : parsed;
+                const result = await opts.tools.call("subagent", input, { callId: "s1", signal });
                 log.push({ op: "subagent", sessionId: opts.sessionId, result });
                 yield { type: "text-delta", text: "sub done" };
                 yield { type: "finish", reason: "stop" };
@@ -94,6 +118,16 @@ export default definePlugin({
                 log.push({ op: "start", text, at: Date.now() });
                 await new Promise((resolve) => setTimeout(resolve, 300));
                 log.push({ op: "end", text, at: Date.now() });
+              }
+              if (text.startsWith("gate ")) {
+                await Promise.race([
+                  gate(text.slice("gate ".length).split(" ")[0] ?? "").promise,
+                  untilAborted(signal),
+                ]);
+                if (signal.aborted) {
+                  yield { type: "finish", reason: "cancelled" };
+                  return;
+                }
               }
               if (text.startsWith("present ")) {
                 const path = text.slice("present ".length);
@@ -126,8 +160,8 @@ export default definePlugin({
               yield { type: "usage", contextTokens: 100, inputTokens: 90, outputTokens: 10 };
               yield { type: "finish", reason: "stop" };
             },
-            async setModel(model) {
-              log.push({ op: "setModel", model });
+            async setModel(model, options) {
+              log.push({ op: "setModel", model, ...options });
             },
             async close() {},
           };
@@ -144,6 +178,7 @@ export default definePlugin({
         label: "Fake model",
         listModels: async () => models,
         async *stream(req, signal): AsyncIterable<InferenceChunk> {
+          log.push({ op: "stream", model: req.model, effort: req.effort ?? null, fast: req.fast ?? null });
           const last = req.messages.at(-1);
           if (last?.role === "tool") {
             yield { type: "text-delta", text: `done: ${textOf(last.content)}` };

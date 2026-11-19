@@ -1,4 +1,13 @@
-import type { AgentProvider, ModelContent, ModelInfo, ModelProvider, Store } from "@valethq/sdk";
+import type {
+  AgentProvider,
+  ModelContent,
+  ModelInfo,
+  ModelOptions,
+  ModelProvider,
+  ModelRef,
+  Store,
+} from "@valethq/sdk";
+import { runOptions } from "./catalog";
 import type { Env } from "./env";
 import type { RunCtx } from "./run-types";
 
@@ -48,35 +57,48 @@ export class CompactionRecorder {
   async end(status: "completed" | "failed" | "cancelled", error?: string): Promise<void> {
     const compactionId = this.#id;
     if (compactionId === undefined) return;
-    this.#id = undefined;
     await this.ctx.scopes.get("context").compactionEnd({
       sessionId: this.sessionId,
       compactionId,
       status,
       ...(error === undefined ? {} : { error }),
     });
+    this.#id = undefined;
   }
 }
 
 async function summarize(
   provider: ModelProvider,
   model: string,
+  options: ModelOptions,
   sessionId: string,
   transcript: string,
   signal: AbortSignal,
 ): Promise<string> {
+  // spec-gap: only finish "stop" is a summary; cancelled, length, and a missing finish are failures.
+  if (signal.aborted) throw new Error("summary cancelled");
   let text = "";
+  let stopped = false;
   const req = {
     model,
+    ...options,
     system: SUMMARY_SYSTEM,
     messages: [{ role: "user" as const, content: [{ type: "text" as const, text: transcript }] }],
     tools: [],
     meta: { sessionId, runId: "compaction" },
   };
   for await (const chunk of provider.stream(req, signal)) {
+    if (signal.aborted) throw new Error("summary cancelled");
     if (chunk.type === "text-delta") text += chunk.text;
-    if (chunk.type === "finish" && chunk.reason === "error") throw new Error(chunk.error ?? "summary failed");
+    if (chunk.type !== "finish") continue;
+    if (chunk.reason === "error") throw new Error(chunk.error ?? "summary failed");
+    if (chunk.reason === "cancelled") throw new Error(chunk.error ?? "summary cancelled");
+    if (chunk.reason === "length") throw new Error(chunk.error ?? "summary truncated");
+    if (chunk.reason !== "stop") throw new Error(chunk.error ?? `summary finished with ${chunk.reason}`);
+    stopped = true;
   }
+  if (signal.aborted) throw new Error("summary cancelled");
+  if (!stopped) throw new Error("summary ended without a finish chunk");
   if (text.trim() === "") throw new Error("the summary came back empty");
   return text.trim();
 }
@@ -85,7 +107,8 @@ async function summarize(
 export function compactWithValet(
   env: Env,
   provider: ModelProvider,
-  model: string,
+  ref: ModelRef,
+  info: ModelInfo,
   sessionId: string,
   reason: "auto" | "manual",
   signal: AbortSignal,
@@ -93,7 +116,8 @@ export function compactWithValet(
   return env.ctx.scopes.get("context").compact({
     sessionId,
     reason,
-    summarize: (transcript) => summarize(provider, model, sessionId, transcript, signal),
+    summarize: (transcript) =>
+      summarize(provider, ref.model, runOptions(ref, info), sessionId, transcript, signal),
   });
 }
 
@@ -101,6 +125,7 @@ export function compactWithValet(
 export async function autoCompact(
   env: Env,
   provider: ModelProvider,
+  ref: ModelRef,
   info: ModelInfo,
   rc: RunCtx,
   contextTokens: number,
@@ -110,7 +135,7 @@ export async function autoCompact(
     .shouldCompact({ sessionId: rc.sessionId, model: info, lastUsage: { contextTokens } });
   if (!shouldCompact) return;
   try {
-    await compactWithValet(env, provider, info.id, rc.sessionId, "auto", rc.signal);
+    await compactWithValet(env, provider, ref, info, rc.sessionId, "auto", rc.signal);
   } catch (error) {
     rc.parts.notice(
       "warn",
@@ -123,12 +148,13 @@ export async function autoCompact(
 export async function compactHarness(
   env: Env,
   provider: AgentProvider,
-  model: string,
+  ref: ModelRef,
+  info: ModelInfo,
   sessionId: string,
   cwd: string,
   instructions: string | undefined,
 ): Promise<string | undefined> {
-  const entry = await env.agents.acquire(provider, sessionId, cwd, model);
+  const entry = await env.agents.acquire(provider, sessionId, cwd, ref.model, runOptions(ref, info));
   const session = entry.session;
   if (!session.compact)
     return `${provider.label} can't be asked to compact. It compacts on its own when it needs to.`;
@@ -136,15 +162,18 @@ export async function compactHarness(
   await recorder.start();
   let completed = false;
   let error: string | undefined;
-  for await (const ev of session.compact(instructions, env.ctx.signal)) {
-    if (ev.type === "compaction-start") await recorder.start();
-    if (ev.type === "compaction-end") {
-      completed ||= ev.status === "completed";
-      await recorder.end(ev.status, ev.error);
+  try {
+    for await (const ev of session.compact(instructions, env.ctx.signal)) {
+      if (ev.type === "compaction-start") await recorder.start();
+      if (ev.type === "compaction-end") {
+        completed ||= ev.status === "completed";
+        await recorder.end(ev.status, ev.error);
+      }
+      if (ev.type === "finish" && ev.reason === "error") error = ev.error ?? "compaction failed";
     }
-    if (ev.type === "finish" && ev.reason === "error") error = ev.error ?? "compaction failed";
+  } finally {
+    await recorder.end("failed", error ?? "the harness reported no compaction");
   }
-  await recorder.end("failed", error ?? "the harness reported no compaction");
   if (error !== undefined) return `Compaction failed: ${error}`;
   // success is shown by the marker itself, so no reply text
   return completed ? undefined : `Compaction failed: ${provider.label} reported no compaction.`;

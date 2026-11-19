@@ -81,7 +81,10 @@ export class PartStream {
     });
   }
 
-  update(callId: string, patch: { status?: ToolData["status"]; title?: string; outputDelta?: string }): void {
+  update(
+    callId: string,
+    patch: { status?: ToolData["status"]; title?: string; outputDelta?: string; input?: unknown },
+  ): void {
     this.#enqueue(() => {
       const tool = this.#tools.get(callId);
       if (!tool) return;
@@ -89,11 +92,12 @@ export class PartStream {
         tool.writer.append(patch.outputDelta);
         tool.data = { ...tool.data, output: (tool.data.output ?? "") + patch.outputDelta };
       }
-      if (patch.status || patch.title) {
+      if (patch.status || patch.title || "input" in patch) {
         tool.data = {
           ...tool.data,
           ...(patch.status && { status: patch.status }),
           ...(patch.title && { title: patch.title }),
+          ...("input" in patch && { input: patch.input }),
         };
         tool.writer.replace(tool.data);
       }

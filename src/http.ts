@@ -1,7 +1,7 @@
 import type { RouteHandler } from "@valethq/sdk";
 import type { Env } from "./env";
 import { forkSession } from "./fork";
-import { configFor, resolveModel } from "./model";
+import { resolveModel } from "./model";
 import { moveSession } from "./move";
 import type { RunQueue } from "./queue";
 
@@ -32,18 +32,7 @@ export function registerHttp(env: Env, queue: RunQueue): void {
   ctx.http.route(
     "GET",
     "/models",
-    ownerOnly(async () => {
-      const providers = await Promise.all(
-        ctx.scopes.all("inference").map(async ({ key, impl }) => {
-          try {
-            return { provider: key, kind: impl.kind, models: await impl.listModels() };
-          } catch (error) {
-            return { provider: key, kind: impl.kind, models: [], error: String(error) };
-          }
-        }),
-      );
-      return Response.json({ providers });
-    }),
+    ownerOnly(async () => Response.json({ providers: await env.catalog.providers() })),
   );
 
   const storeOf = (principalId: string | undefined) =>
@@ -98,7 +87,9 @@ export function registerHttp(env: Env, queue: RunQueue): void {
       const usage = env.lastUsage.get(id);
       return Response.json({
         ...queue.snapshot(id),
-        model: resolveModel(session, ctx.store.projects.get(session.projectId), configFor(ctx)),
+        model: env.catalog.normalize(
+          resolveModel(session, ctx.store.projects.get(session.projectId), ctx.config),
+        ),
         ...(usage ? { usage } : {}),
       });
     }),

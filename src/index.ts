@@ -1,5 +1,6 @@
 import { definePlugin, type ToolDefinition } from "@valethq/sdk";
 import { AgentSessions } from "./agents";
+import { Catalog } from "./catalog";
 import { registerCommands } from "./commands";
 import { isNotification, textOf } from "./content";
 import { agentMeta } from "./copy";
@@ -9,26 +10,35 @@ import { ToolRouter } from "./surface";
 import type { AgentConfig } from "./model";
 import { presentTool } from "./present";
 import { RunQueue } from "./queue";
-import { registerSettings } from "./settings";
 import { authorRole } from "./role";
 import { subagentTool } from "./subagent";
+import { SUBAGENT_END } from "./subagent-notify";
 import { placeholderPatch } from "./title";
+import { rewriteLegacyRefs } from "./legacy";
 
 export default definePlugin<AgentConfig>({
   activate(ctx) {
     const ownTools = (): ToolDefinition[] => [
       presentTool(ctx) as ToolDefinition,
-      subagentTool(ctx, queue) as ToolDefinition,
+      subagentTool(ctx, queue, catalog) as ToolDefinition,
     ];
+    ctx.store.partTypes.define(SUBAGENT_END);
     const tools = new ToolRouter(ctx, ownTools);
-    const env: Env = { ctx, agents: new AgentSessions(ctx, tools), tools, lastUsage: new Map(), ownTools };
+    const catalog = new Catalog(ctx);
+    const env: Env = {
+      ctx,
+      agents: new AgentSessions(ctx, tools),
+      catalog,
+      tools,
+      lastUsage: new Map(),
+      ownTools,
+    };
     const queue = new RunQueue(env);
     ctx.onDispose(() => env.agents.closeAll());
     ctx.onConfigChange(() => {}); // config is read from ctx.config at use, so a reload needs no action
 
     registerCommands(env, queue);
     registerHttp(env, queue);
-    registerSettings(ctx);
 
     ctx.events.after("message.create", (e) => {
       const { message, parts } = e.payload;
@@ -71,15 +81,15 @@ export default definePlugin<AgentConfig>({
     });
 
     void (async () => {
+      await catalog.warm();
+      await rewriteLegacyRefs(ctx, catalog);
       for (const project of ctx.store.projects.list()) {
         for (const s of ctx.store.sessions.list({ projectId: project.id })) {
           if (s.status === "running")
             await ctx.store.sessions.update(s.id, { status: "idle" }).catch(() => {});
           if (s.title !== null) continue;
           try {
-            const first = ctx.store.messages
-              .list(s.id, { limit: 20 })
-              .find(({ message }) => message.role === "user");
+            const first = ctx.store.messages.list(s.id).find(({ message }) => message.role === "user");
             const patch = first ? placeholderPatch(s, textOf(first.parts)) : null;
             if (patch) await ctx.store.sessions.update(s.id, patch);
           } catch {}

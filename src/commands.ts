@@ -2,7 +2,8 @@ import type { Caller, Part } from "@valethq/sdk";
 import { compactHarness, compactWithValet } from "./compactions";
 import type { Env } from "./env";
 import { forkSession } from "./fork";
-import { configFor, resolveModel } from "./model";
+import { modelLabel } from "./labels";
+import { parseRef, resolveModel } from "./model";
 import { moveSession } from "./move";
 import type { RunQueue } from "./queue";
 import { authorRole } from "./role";
@@ -24,20 +25,20 @@ const COMMANDS: Record<string, Command> = {
     const { store } = env.ctx;
     const session = store.sessions.get(sessionId);
     if (!session) return "Unknown session.";
-    const current = resolveModel(session, store.projects.get(session.projectId), configFor(env.ctx));
-    if (!arg) return `Current model: ${current.provider}:${current.model}.`;
-    const sep = arg.indexOf(":");
-    const explicit = sep > 0 && env.ctx.scopes.maybe("inference", arg.slice(0, sep)) !== undefined;
-    const ref = explicit
-      ? { provider: arg.slice(0, sep), model: arg.slice(sep + 1) }
-      : { provider: current.provider, model: arg };
+    const current = env.catalog.normalize(
+      resolveModel(session, store.projects.get(session.projectId), env.ctx.config),
+    );
+    if (!arg) return `Current model: ${modelLabel(current)}.`;
+    const parsed = parseRef(arg, current, (key) => env.ctx.scopes.maybe("inference", key) !== undefined);
+    if (!parsed) return "Usage: /model [provider:]model [effort] [fast]";
+    const ref = env.catalog.normalize(parsed);
     const fallbacks = session.settings.model?.fallbacks;
     const res = await store.sessions.update(sessionId, {
       settings: { ...session.settings, model: { ...ref, ...(fallbacks ? { fallbacks } : {}) } },
     });
     return isCancelled(res)
       ? `Could not change model: ${res.cancelReason ?? "cancelled"}.`
-      : `Model set to ${ref.model}.`;
+      : `Model set to ${modelLabel(ref)}.`;
   },
   async stop({ queue, sessionId, caller }) {
     const stopped = await queue.cancelActive(sessionId, caller.actor?.principalId ?? caller.plugin);
@@ -88,18 +89,19 @@ const COMMANDS: Record<string, Command> = {
     if (!session) return "Unknown session.";
     if (queue.snapshot(sessionId).activeRunId) return "A turn is running. Compact once it finishes.";
     const project = store.projects.get(session.projectId);
-    const cand = resolveModel(session, project, configFor(env.ctx));
+    const cand = env.catalog.normalize(resolveModel(session, project, env.ctx.config));
     const provider = env.ctx.scopes.maybe("inference", cand.provider);
     if (!provider) return `Compaction failed: no inference provider "${cand.provider}".`;
+    const info = await env.catalog.info(cand);
     // Compaction runs after this returns: the send must not wait on it, or the client times out and resends.
     const cwd = project?.workspaceDir ?? env.ctx.paths.data;
     const instructions = arg === "" ? undefined : arg;
     const job =
       provider.kind === "model"
-        ? compactWithValet(env, provider, cand.model, sessionId, "manual", env.ctx.signal).then(
+        ? compactWithValet(env, provider, cand, info, sessionId, "manual", env.ctx.signal).then(
             () => undefined,
           )
-        : compactHarness(env, provider, cand.model, sessionId, cwd, instructions);
+        : compactHarness(env, provider, cand, info, sessionId, cwd, instructions);
     job.then(
       (text) => {
         if (text !== undefined) return postReply(env, sessionId, text);
