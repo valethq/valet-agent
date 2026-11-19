@@ -18,9 +18,9 @@
       "models": {
         "title": "Models",
         "description": "Every model your providers offer, plus the ones you add. Turn models off to keep them out of the picker, or rename them and fix their limits.",
-        "group": "models",
+        "group": "inference",
         "icon": "sparkles",
-        "order": 0
+        "order": 900
       }
     },
     "properties": {
