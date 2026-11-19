@@ -1,5 +1,5 @@
 import { readdir, realpath, stat } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Role, ToolDefinition, ToolResult } from "@valethq/sdk";
 import type { AgentCtx } from "./env";
 import { roleAtLeast } from "./role";
@@ -17,7 +17,9 @@ const failure = (text: string): ToolResult => ({ content: [{ type: "text", text 
 
 const inside = (root: string, path: string): boolean => {
   const rel = relative(root, path);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  if (rel === "") return true;
+  if (isAbsolute(rel)) return false;
+  return rel !== ".." && !rel.startsWith(`..${sep}`);
 };
 
 /** Appends the regular files under `dir` as [absolute path, name relative to dir's parent], sorted, stopping past the cap. Symlinks and dot-entries are skipped. */
@@ -68,7 +70,7 @@ export function presentTool(ctx: AgentCtx): ToolDefinition<{ path?: unknown; nam
       if (!target) return failure(`not found: ${input.path}`);
       if (confined) {
         const roots = await Promise.all(
-          [call.cwd, ...(ctx.config.presentRoots ?? []).filter((r) => r !== "")].map((r) =>
+          [call.cwd, ...(ctx.config.presentRoots ?? []).filter((r) => r !== "" && isAbsolute(r))].map((r) =>
             realpath(r).catch(() => undefined),
           ),
         );

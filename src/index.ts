@@ -87,9 +87,7 @@ export default definePlugin<AgentConfig>({
             await ctx.store.sessions.update(s.id, { status: "idle" }).catch(() => {});
           if (s.title !== null) continue;
           try {
-            const first = ctx.store.messages
-              .list(s.id, { limit: 20 })
-              .find(({ message }) => message.role === "user");
+            const first = ctx.store.messages.list(s.id).find(({ message }) => message.role === "user");
             const patch = first ? placeholderPatch(s, textOf(first.parts)) : null;
             if (patch) await ctx.store.sessions.update(s.id, patch);
           } catch {}
