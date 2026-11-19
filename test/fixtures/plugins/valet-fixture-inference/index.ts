@@ -26,6 +26,28 @@ const untilAborted = (signal: AbortSignal): Promise<void> =>
 export default definePlugin({
   activate(ctx) {
     const log: Record<string, unknown>[] = [];
+    const gates = new Map<string, { promise: Promise<void>; open(): void }>();
+    const gate = (name: string) => {
+      let g = gates.get(name);
+      if (!g) {
+        let open = () => {};
+        const promise = new Promise<void>((resolve) => {
+          open = resolve;
+        });
+        g = { promise, open };
+        gates.set(name, g);
+      }
+      return g;
+    };
+    ctx.http.route(
+      "POST",
+      "/gate/:name",
+      (_req, { params }) => {
+        gate(params.name ?? "").open();
+        return Response.json({ ok: true });
+      },
+      { public: true },
+    );
     let surface: AgentOpenOptions["tools"] | undefined;
     ctx.http.route(
       "POST",
@@ -84,8 +106,9 @@ export default definePlugin({
                 return;
               }
               if (text.startsWith("sub ")) {
-                const tasks = JSON.parse(text.slice("sub ".length));
-                const result = await opts.tools.call("subagent", { tasks }, { callId: "s1", signal });
+                const parsed = JSON.parse(text.slice("sub ".length));
+                const input = Array.isArray(parsed) ? { tasks: parsed } : parsed;
+                const result = await opts.tools.call("subagent", input, { callId: "s1", signal });
                 log.push({ op: "subagent", sessionId: opts.sessionId, result });
                 yield { type: "text-delta", text: "sub done" };
                 yield { type: "finish", reason: "stop" };
@@ -95,6 +118,16 @@ export default definePlugin({
                 log.push({ op: "start", text, at: Date.now() });
                 await new Promise((resolve) => setTimeout(resolve, 300));
                 log.push({ op: "end", text, at: Date.now() });
+              }
+              if (text.startsWith("gate ")) {
+                await Promise.race([
+                  gate(text.slice("gate ".length).split(" ")[0] ?? "").promise,
+                  untilAborted(signal),
+                ]);
+                if (signal.aborted) {
+                  yield { type: "finish", reason: "cancelled" };
+                  return;
+                }
               }
               if (text.startsWith("present ")) {
                 const path = text.slice("present ".length);

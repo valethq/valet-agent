@@ -84,6 +84,13 @@
         "x-widget": "segmented",
         "default": "queue"
       },
+      "subagentWakeGroupSeconds": {
+        "type": "number",
+        "title": "Group subagent wake-ups (seconds)",
+        "description": "When a background subagent ends, wait this long for more to end and wake the chat once for all of them. Each one that ends in the meantime adds this long again. The chat is woken at once when none are left running. 0 wakes for every subagent on its own.",
+        "minimum": 0,
+        "default": 15
+      },
       "presentConfine": {
         "type": "boolean",
         "title": "Confine present to the workspace",

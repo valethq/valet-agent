@@ -14,6 +14,8 @@ export interface AgentConfig {
   models?: CatalogRow[];
   /** What a message sent during a run does, for every session. */
   queueMode?: "queue" | "interrupt";
+  /** Seconds the subagent tool waits to group background subagents that end close together into one wake-up. 0 wakes for each. */
+  subagentWakeGroupSeconds?: number;
   /** Tool names agent providers may see. Unset exposes every tools@1 tool the run's role allows. */
   exposedTools?: string[];
   /** Whether the present tool is limited to the project workspace plus presentRoots. */

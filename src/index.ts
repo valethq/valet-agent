@@ -12,6 +12,7 @@ import { presentTool } from "./present";
 import { RunQueue } from "./queue";
 import { authorRole } from "./role";
 import { subagentTool } from "./subagent";
+import { SUBAGENT_END } from "./subagent-notify";
 import { placeholderPatch } from "./title";
 import { rewriteLegacyRefs } from "./legacy";
 
@@ -21,6 +22,7 @@ export default definePlugin<AgentConfig>({
       presentTool(ctx) as ToolDefinition,
       subagentTool(ctx, queue, catalog) as ToolDefinition,
     ];
+    ctx.store.partTypes.define(SUBAGENT_END);
     const tools = new ToolRouter(ctx, ownTools);
     const catalog = new Catalog(ctx);
     const env: Env = {
