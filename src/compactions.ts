@@ -57,13 +57,13 @@ export class CompactionRecorder {
   async end(status: "completed" | "failed" | "cancelled", error?: string): Promise<void> {
     const compactionId = this.#id;
     if (compactionId === undefined) return;
-    this.#id = undefined;
     await this.ctx.scopes.get("context").compactionEnd({
       sessionId: this.sessionId,
       compactionId,
       status,
       ...(error === undefined ? {} : { error }),
     });
+    this.#id = undefined;
   }
 }
 
@@ -75,7 +75,10 @@ async function summarize(
   transcript: string,
   signal: AbortSignal,
 ): Promise<string> {
+  // spec-gap: only finish "stop" is a summary; cancelled, length, and a missing finish are failures.
+  if (signal.aborted) throw new Error("summary cancelled");
   let text = "";
+  let stopped = false;
   const req = {
     model,
     ...options,
@@ -85,9 +88,17 @@ async function summarize(
     meta: { sessionId, runId: "compaction" },
   };
   for await (const chunk of provider.stream(req, signal)) {
+    if (signal.aborted) throw new Error("summary cancelled");
     if (chunk.type === "text-delta") text += chunk.text;
-    if (chunk.type === "finish" && chunk.reason === "error") throw new Error(chunk.error ?? "summary failed");
+    if (chunk.type !== "finish") continue;
+    if (chunk.reason === "error") throw new Error(chunk.error ?? "summary failed");
+    if (chunk.reason === "cancelled") throw new Error(chunk.error ?? "summary cancelled");
+    if (chunk.reason === "length") throw new Error(chunk.error ?? "summary truncated");
+    if (chunk.reason !== "stop") throw new Error(chunk.error ?? `summary finished with ${chunk.reason}`);
+    stopped = true;
   }
+  if (signal.aborted) throw new Error("summary cancelled");
+  if (!stopped) throw new Error("summary ended without a finish chunk");
   if (text.trim() === "") throw new Error("the summary came back empty");
   return text.trim();
 }
@@ -151,15 +162,18 @@ export async function compactHarness(
   await recorder.start();
   let completed = false;
   let error: string | undefined;
-  for await (const ev of session.compact(instructions, env.ctx.signal)) {
-    if (ev.type === "compaction-start") await recorder.start();
-    if (ev.type === "compaction-end") {
-      completed ||= ev.status === "completed";
-      await recorder.end(ev.status, ev.error);
+  try {
+    for await (const ev of session.compact(instructions, env.ctx.signal)) {
+      if (ev.type === "compaction-start") await recorder.start();
+      if (ev.type === "compaction-end") {
+        completed ||= ev.status === "completed";
+        await recorder.end(ev.status, ev.error);
+      }
+      if (ev.type === "finish" && ev.reason === "error") error = ev.error ?? "compaction failed";
     }
-    if (ev.type === "finish" && ev.reason === "error") error = ev.error ?? "compaction failed";
+  } finally {
+    await recorder.end("failed", error ?? "the harness reported no compaction");
   }
-  await recorder.end("failed", error ?? "the harness reported no compaction");
   if (error !== undefined) return `Compaction failed: ${error}`;
   // success is shown by the marker itself, so no reply text
   return completed ? undefined : `Compaction failed: ${provider.label} reported no compaction.`;

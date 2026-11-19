@@ -29,7 +29,11 @@ export async function copyMessages(
       ...(message.authorPrincipalId ? { authorPrincipalId: message.authorPrincipalId } : {}),
       status: message.status === "streaming" ? "interrupted" : message.status,
       meta: { ...message.meta, agent: { ...agentMeta(message), copiedFrom: message.id } },
-      parts: parts.map((p) => p.data),
+      parts: parts.map(({ data }) =>
+        data.type === "tool-call" && (data.status === "pending" || data.status === "running")
+          ? { ...data, status: "cancelled" as const }
+          : data,
+      ),
     });
     if ("cancelled" in res)
       throw new Error(`copy of message ${message.seq} refused: ${res.cancelReason ?? "cancelled"}`);
