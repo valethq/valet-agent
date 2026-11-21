@@ -10,6 +10,7 @@ import { ToolRouter } from "./surface";
 import type { AgentConfig } from "./model";
 import { presentTool } from "./present";
 import { RunQueue } from "./queue";
+import { registerSettings } from "./settings";
 import { authorRole } from "./role";
 import { subagentTool } from "./subagent";
 import { SUBAGENT_END } from "./subagent-notify";
@@ -39,6 +40,7 @@ export default definePlugin<AgentConfig>({
 
     registerCommands(env, queue);
     registerHttp(env, queue);
+    registerSettings(ctx, catalog, ownTools);
 
     ctx.events.after("message.create", (e) => {
       const { message, parts } = e.payload;
