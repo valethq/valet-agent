@@ -20,8 +20,9 @@ export default definePlugin({
     );
     ctx.scopes.provide("policy", {
       check: (_subject, permission, resource) =>
-        resource !== undefined && denied.has(`${permission}|${resource.id}`)
-          ? { allow: false as const, by: "valet-fixture-policy", reason: `fixture denies ${resource.id}` }
+        denied.has(`${permission}|*`) ||
+        (resource !== undefined && denied.has(`${permission}|${resource.id}`))
+          ? { allow: false as const, by: "valet-fixture-policy", reason: `fixture denies ${permission}` }
           : { allow: true as const },
     });
   },
