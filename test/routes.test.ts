@@ -10,11 +10,27 @@ interface Route {
   opts: RouteAcl;
 }
 
+const sessionFixture = (init: { id: string; projectId: string; parentSessionId?: string | null }) => ({
+  title: null,
+  color: null,
+  parentSessionId: null,
+  status: "idle",
+  settings: {},
+  providerState: {},
+  createdAt: 1,
+  updatedAt: 1,
+  lastMessageAt: null,
+  lastResponseAt: null,
+  ...init,
+});
+
 function rig(opts: { children?: { id: string; parentSessionId: string }[]; scopes?: object } = {}) {
-  const sessions = new Map<string, { id: string; projectId: string; parentSessionId?: string }>([
-    ["ses_1", { id: "ses_1", projectId: "prj_1" }],
-    ...(opts.children ?? []).map((c) => [c.id, { ...c, projectId: "prj_1" }] as const),
+  const sessions = new Map<string, ReturnType<typeof sessionFixture>>([
+    ["ses_1", sessionFixture({ id: "ses_1", projectId: "prj_1" })],
+    ...(opts.children ?? []).map((c) => [c.id, sessionFixture({ ...c, projectId: "prj_1" })] as const),
   ]);
+  const projects = new Map([["prj_2", { id: "prj_2", name: "beta" }]]);
+  let seq = 0;
   const routes = new Map<string, Route>();
   const ctx = {
     ...aclParts,
@@ -26,8 +42,28 @@ function rig(opts: { children?: { id: string; parentSessionId: string }[]; scope
         get: (id: string) => sessions.get(id),
         list: ({ projectId }: { projectId?: string } = {}) =>
           [...sessions.values()].filter((s) => projectId === undefined || s.projectId === projectId),
+        create: async (init: { projectId: string; parentSessionId?: string }) => {
+          const s = sessionFixture({ ...init, id: `ses_new${++seq}` });
+          sessions.set(s.id, s);
+          return s;
+        },
+        update: async (id: string, patch: object) => {
+          const s = sessions.get(id);
+          return s === undefined
+            ? { cancelled: true, cancelReason: "unknown session" }
+            : Object.assign(s, patch);
+        },
+        delete: async (id: string) => {
+          const s = sessions.get(id);
+          sessions.delete(id);
+          return s ?? { cancelled: true, cancelReason: "unknown session" };
+        },
       },
-      projects: { get: () => undefined },
+      projects: { get: (id: string) => projects.get(id) },
+      messages: {
+        list: () => [],
+        create: async (init: { sessionId: string }) => ({ message: { id: `m${++seq}`, ...init } }),
+      },
     },
     http: {
       route: (method: string, path: string, handler: RouteHandler, opts: RouteAcl = {}) =>
@@ -51,7 +87,7 @@ function rig(opts: { children?: { id: string; parentSessionId: string }[]; scope
       }),
       { caller, principal: undefined, params: { id: "ses_1" }, url: new URL("http://x/") } as RequestContext,
     );
-  return { route, call, routes };
+  return { route, call, routes, sessions };
 }
 
 describe("route permissions", () => {
@@ -110,11 +146,18 @@ describe("route permissions", () => {
   });
 
   test("a move proceeds when every session in the tree is writable", async () => {
-    const { call } = rig({
+    const { call, sessions } = rig({
       children: [{ id: "ses_kid", parentSessionId: "ses_1" }],
       scopes: scoped(["session:ses_1", "session:ses_kid", "project:prj_2"]),
     });
     const res = await call("POST /sessions/:id/move", callerOf("owner"), { projectId: "prj_2" });
-    expect(res.status).not.toBe(403);
+    expect(res.status).toBe(200);
+    const moved = (await res.json()) as { id: string; projectId: string };
+    expect(moved.projectId).toBe("prj_2");
+    expect(sessions.has("ses_1")).toBe(false);
+    expect(sessions.has("ses_kid")).toBe(false);
+    const child = [...sessions.values()].find((s) => s.id !== moved.id);
+    expect(child?.projectId).toBe("prj_2");
+    expect(child?.parentSessionId).toBe(moved.id);
   });
 });
