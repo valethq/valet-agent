@@ -1,4 +1,4 @@
-import type { Message, Part, Role, Run, Store } from "@valethq/sdk";
+import type { Message, Part, Role, Run, RunSubject, Store } from "@valethq/sdk";
 import { runAgent } from "./agent-run";
 import { toContent } from "./content";
 import type { Env } from "./env";
@@ -12,6 +12,7 @@ export interface Job {
   message: Message;
   parts: Part[];
   role: Role;
+  subject: RunSubject;
 }
 export interface Active {
   controller: AbortController;
@@ -88,11 +89,14 @@ export async function execute(env: Env, job: Job, active: Active): Promise<void>
   const session = ctx.store.sessions.get(job.sessionId);
   if (!session) return;
   const project = ctx.store.projects.get(session.projectId);
-  const author = job.message.authorPrincipalId;
-  const store =
-    author && ctx.store.principals.get(author) ? ctx.store.as({ principalId: author }) : ctx.store;
-
-  const run = store.runs.create({ sessionId: session.id, triggerMessageId: job.message.id, role: job.role });
+  const { principalId } = job.subject;
+  const run = (principalId ? ctx.store.as({ principalId }) : ctx.store).runs.create({
+    sessionId: session.id,
+    triggerMessageId: job.message.id,
+    role: job.role,
+    subject: job.subject,
+  });
+  const store = principalId ? ctx.store.as({ principalId, runId: run.id }) : ctx.store;
   active.runId = run.id;
   store.runs.update(run.id, { status: "running" });
 
@@ -132,7 +136,7 @@ export async function execute(env: Env, job: Job, active: Active): Promise<void>
     runId: run.id,
     triggerSeq: job.message.seq,
     role: job.role,
-    caller: { plugin: ctx.plugin.id, ...(author ? { actor: { principalId: author, role: job.role } } : {}) },
+    caller: ctx.store.runs.caller(run.id),
     content: toContent(job.parts),
     parts,
     signal,

@@ -1,16 +1,12 @@
-import type { RouteHandler } from "@valethq/sdk";
+import { can, sessionResource } from "@valethq/sdk";
 import type { Env } from "./env";
 import { forkSession } from "./fork";
 import { resolveModel } from "./model";
 import { moveSession } from "./move";
 import type { RunQueue } from "./queue";
 
-const ownerOnly =
-  (handler: RouteHandler): RouteHandler =>
-  (req, ctx) =>
-    ctx.principal?.role === "owner"
-      ? handler(req, ctx)
-      : Response.json({ error: { code: "denied", reason: "owner only" } }, { status: 403 });
+const sessionIdOf = (req: Request): string =>
+  new URL(req.url).pathname.split("/sessions/")[1]?.split("/")[0] ?? "";
 
 const failed = (error: unknown): Response => {
   const message = error instanceof Error ? error.message : String(error);
@@ -29,11 +25,11 @@ const bodyOf = async (req: Request): Promise<Record<string, unknown>> => {
 export function registerHttp(env: Env, queue: RunQueue): void {
   const { ctx } = env;
 
-  ctx.http.route(
-    "GET",
-    "/models",
-    ownerOnly(async () => Response.json({ providers: await env.catalog.providers() })),
-  );
+  ctx.http.route("GET", "/models", async () => Response.json({ providers: await env.catalog.providers() }), {
+    permission: "agent:model.read",
+  });
+
+  const resourceOf = (req: Request) => sessionResource(ctx, sessionIdOf(req));
 
   const storeOf = (principalId: string | undefined) =>
     principalId ? ctx.store.as({ principalId }) : ctx.store;
@@ -41,7 +37,7 @@ export function registerHttp(env: Env, queue: RunQueue): void {
   ctx.http.route(
     "POST",
     "/sessions/:id/fork",
-    ownerOnly(async (req, { params, principal }) => {
+    async (req, { params, principal }) => {
       const { messageId } = await bodyOf(req);
       if (messageId !== undefined && typeof messageId !== "string")
         return failed(new Error("messageId must be a string"));
@@ -51,15 +47,21 @@ export function registerHttp(env: Env, queue: RunQueue): void {
       } catch (error) {
         return failed(error);
       }
-    }),
+    },
+    { permission: "core:session.write", resource: resourceOf },
   );
 
   ctx.http.route(
     "POST",
     "/sessions/:id/move",
-    ownerOnly(async (req, { params, principal }) => {
+    async (req, { params, principal, caller }) => {
       const { projectId } = await bodyOf(req);
       if (typeof projectId !== "string") return failed(new Error("projectId is required"));
+      if (!can(ctx, caller, "core:session.write", { id: `project:${projectId}` }).allow)
+        return Response.json(
+          { error: { code: "denied", reason: "no write access to the project" } },
+          { status: 403 },
+        );
       const id = params.id as string;
       const { activeRunId, queued } = queue.snapshot(id);
       try {
@@ -73,13 +75,14 @@ export function registerHttp(env: Env, queue: RunQueue): void {
       } catch (error) {
         return failed(error);
       }
-    }),
+    },
+    { permission: "core:session.write", resource: resourceOf },
   );
 
   ctx.http.route(
     "GET",
     "/sessions/:id/state",
-    ownerOnly((_req, { params }) => {
+    (_req, { params }) => {
       const id = params.id as string;
       const session = ctx.store.sessions.get(id);
       if (!session)
@@ -92,6 +95,7 @@ export function registerHttp(env: Env, queue: RunQueue): void {
         ),
         ...(usage ? { usage } : {}),
       });
-    }),
+    },
+    { permission: "core:session.read", resource: resourceOf },
   );
 }

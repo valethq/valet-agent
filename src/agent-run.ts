@@ -5,6 +5,7 @@ import { historyNote } from "./history";
 import { runOptions } from "./catalog";
 import type { ModelRef } from "./model";
 import type { Outcome, RunCtx } from "./run-types";
+import { emitToolCall } from "./tools";
 
 /** Runs one agent turn with the session's tools bound to this run. */
 export async function runAgent(
@@ -80,13 +81,7 @@ async function promptAgent(
           break;
         case "permission": {
           const { callId, title } = ev.request;
-          const gate = await ctx.events.emit("tool.call", {
-            runId: rc.runId,
-            callId,
-            name: title,
-            input: { title },
-            role: rc.role,
-          });
+          const gate = await emitToolCall(ctx, rc, { callId, name: title, input: { title } });
           ev.respond(!gate.cancelled);
           if (gate.cancelled) rc.parts.update(callId, { status: "denied" });
           break;

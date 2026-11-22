@@ -3,6 +3,7 @@ import type { PluginContext, ToolDefinition } from "@valethq/sdk";
 import type { AgentConfig } from "../src/model";
 import type { RunCtx } from "../src/run-types";
 import { ToolRouter } from "../src/surface";
+import { aclParts, callerOf, principalOf, principals } from "./acl";
 
 const tool = (name: string): ToolDefinition => ({
   name,
@@ -104,5 +105,96 @@ describe("ToolRouter", () => {
     expect(await router.surface("ses_1").authorize("Bash", {}, { callId: "c" })).toEqual({
       denied: "no valet run is active for this session",
     });
+  });
+});
+
+describe("ToolRouter and the run's subject", () => {
+  function rig() {
+    const scopes: { caller?: unknown }[] = [];
+    const emitted: { payload: unknown; opts: unknown }[] = [];
+    const calls: unknown[] = [];
+    const echo: ToolDefinition = {
+      ...tool("echo"),
+      invoke: async (_input, call) => {
+        calls.push(call.caller);
+        return { content: [{ type: "text", text: "ok" }] };
+      },
+    };
+    const ctx = {
+      ...aclParts,
+      config: {},
+      store: { principals, sessions: { get: () => undefined } },
+      scopes: {
+        maybe: () => undefined,
+        all: () => [
+          {
+            key: "fake",
+            plugin: "fake",
+            impl: {
+              list: (scope: { caller?: unknown }) => {
+                scopes.push(scope);
+                return [echo];
+              },
+            },
+          },
+        ],
+      },
+      events: {
+        emit: async (_: string, payload: unknown, opts: unknown) => {
+          emitted.push({ payload, opts });
+          return { payload, cancelled: false };
+        },
+      },
+    } as unknown as PluginContext<AgentConfig>;
+    const present = { ...tool("present"), permission: "agent:present" };
+    const subagent = { ...tool("subagent"), permission: "agent:subagent" };
+    return { ctx, scopes, emitted, calls, own: () => [present, subagent] as ToolDefinition[] };
+  }
+
+  const runAs = (role: "owner" | "trusted" | "guest", sessionId = "ses_1"): RunCtx =>
+    ({
+      ...runFor(sessionId),
+      role,
+      caller: { ...callerOf(role), actor: { ...callerOf(role).actor, runId: "run_1" } },
+    }) as unknown as RunCtx;
+
+  test("the provider's list scope carries the run's caller", async () => {
+    const t = rig();
+    const rc = runAs("owner");
+    await new ToolRouter(t.ctx, t.own).enter(rc);
+    expect(t.scopes[0]?.caller).toBe(rc.caller);
+  });
+
+  test("own tools are listed by permission and the role floor", async () => {
+    const t = rig();
+    const names = async (role: "owner" | "trusted" | "guest") => {
+      const router = new ToolRouter(t.ctx, t.own);
+      await router.enter(runAs(role, `ses_${role}`));
+      return router
+        .surface(`ses_${role}`)
+        .list()
+        .map((x) => x.name);
+    };
+    expect(await names("owner")).toEqual(["echo", "present", "subagent"]);
+    expect(await names("trusted")).toEqual(["echo", "present"]);
+    expect(await names("guest")).toEqual(["echo"]);
+  });
+
+  test("tool.call is emitted as the run's principal and run; invoke gets the run's caller", async () => {
+    const t = rig();
+    const router = new ToolRouter(t.ctx, t.own);
+    const rc = runAs("owner");
+    await router.enter(rc);
+    await router.surface("ses_1").call("echo", {}, { callId: "c", signal: new AbortController().signal });
+    expect(t.emitted[0]?.opts).toEqual({ as: { principalId: principalOf("owner"), runId: "run_1" } });
+    expect(t.calls).toEqual([rc.caller]);
+  });
+
+  test("a run with no principal emits tool.call as the plugin", async () => {
+    const t = rig();
+    const router = new ToolRouter(t.ctx, t.own);
+    await router.enter({ ...runFor("ses_1"), caller: { plugin: "valet-agent" } } as unknown as RunCtx);
+    await router.surface("ses_1").authorize("echo", {}, { callId: "c" });
+    expect(t.emitted[0]?.opts).toBeUndefined();
   });
 });

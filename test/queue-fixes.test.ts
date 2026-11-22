@@ -10,6 +10,7 @@ import type { AgentConfig } from "../src/model";
 import type { RunQueue } from "../src/queue";
 import { execute, type Job } from "../src/runner";
 import { subagentTool } from "../src/subagent";
+import { openAcl } from "./acl";
 import { type Json, type Kernel, startKernel, waitFor } from "./kernel";
 
 describe("historyNote", () => {
@@ -133,6 +134,7 @@ describe("execute settles a run when setup or completion throws", () => {
           Object.assign(run, patch);
         },
         get: (id: string) => runs.get(id),
+        caller: () => ({ plugin: "valet-agent" }),
       },
       messages: {
         create: async (m: { runId?: string }) => {
@@ -170,6 +172,7 @@ describe("execute settles a run when setup or completion throws", () => {
       message: { id: "msg", seq: 1, authorPrincipalId: null },
       parts: [],
       role: "owner",
+      subject: { principalId: null },
     } as unknown as Job;
     return { env, job, runs, completed, assistant: () => assistant };
   }
@@ -252,11 +255,10 @@ describe("subagent abort", () => {
       runs: { get: (id: string) => (id === "run-child" ? { status: "complete" } : undefined) },
     } as unknown as Store;
     const ctx = {
-      plugin: { id: "valet-agent" },
+      ...openAcl,
       config: {},
       signal: new AbortController().signal,
       store,
-      scopes: { maybe: () => undefined },
     } as unknown as AgentCtx;
     return { signal, added, removed, seen, queue, ctx };
   }

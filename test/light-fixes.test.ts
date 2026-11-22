@@ -7,22 +7,26 @@ import { copyMessages } from "../src/copy";
 import { textOf } from "../src/content";
 import { presentedOf, presentTool } from "../src/present";
 import type { AgentCtx } from "../src/env";
+import { aclParts, callerOf, principals } from "./acl";
 import type { Role, ToolCall } from "@valethq/sdk";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "valet-light-"));
 
 function presentHarness(config: Record<string, unknown> = {}) {
   const ctx = {
+    ...aclParts,
     config,
     store: {
+      principals,
+      sessions: { get: () => undefined },
       blobs: {
-        put: async (b: Blob) => ({ id: "blb_1" }),
+        put: async (_b: Blob) => ({ id: "blb_1" }),
       },
     },
   } as unknown as AgentCtx;
   const tool = presentTool(ctx);
   return (cwd: string, path: string, role: Role = "owner") =>
-    tool.invoke({ path }, { cwd, role } as ToolCall);
+    tool.invoke({ path }, { cwd, role, sessionId: "ses_1", caller: callerOf(role) } as ToolCall);
 }
 
 describe("light fixes", () => {

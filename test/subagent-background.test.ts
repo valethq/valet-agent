@@ -10,6 +10,7 @@ import { subagentTool } from "../src/subagent";
 import { announce, SUBAGENT_END } from "../src/subagent-notify";
 import { type Clock, wakeGroup, wakeGroupMs } from "../src/subagent-wake";
 import type { Outcome } from "../src/subagent-text";
+import { openAcl } from "./acl";
 import { type Json, type Kernel, sleep, startKernel, waitFor } from "./kernel";
 
 describe("subagent in the background (kernel)", () => {
@@ -110,6 +111,14 @@ describe("subagent in the background (kernel)", () => {
     expect(woken?.message.status).toBe("complete");
     const run = (await k.api(`/api/core/runs/${woken?.message.runId}`)).body;
     expect(run).toMatchObject({ status: "complete", role: "owner", triggerMessageId: entry?.message.id });
+    const childRuns = await Promise.all(
+      kids.map(async (kid) => {
+        const [reply] = (await messages(kid.id)).filter((m) => m.message.role === "assistant");
+        return reply?.message.runId;
+      }),
+    );
+    expect(childRuns).toContain(run.subject.originRunId);
+    expect(run.subject).toMatchObject({ principalId: expect.any(String) });
     expect((await messages(parent)).map((m) => m.message.role)).toEqual([
       "user",
       "assistant",
@@ -358,7 +367,7 @@ describe("subagent yield window (unit)", () => {
     const ids = opts.children ?? ["child"];
     const call = new AbortController();
     const valet = new AbortController();
-    const seen = { cancel: [] as string[], posted: [] as Json[], warned: [] as string[] };
+    const seen = { cancel: [] as string[], posted: [] as Json[], warned: [] as string[], as: [] as Json[] };
     const listeners = new Set<(f: Finished) => void>();
     const queue = {
       onFinished(fn: (f: Finished) => void) {
@@ -383,7 +392,10 @@ describe("subagent yield window (unit)", () => {
       sessions: { get: (id: string) => sessions.get(id) },
       projects: { get: () => undefined },
       principals: { get: (id: string) => (known && id === "owner" ? { id, role: "owner" } : undefined) },
-      as: () => store,
+      as: (actor: Json) => {
+        seen.as.push(actor);
+        return store;
+      },
       messages: {
         create: async (m: Json) => {
           if (m.role === "system") {
@@ -402,11 +414,10 @@ describe("subagent yield window (unit)", () => {
       runs: { get: (id: string) => (id.startsWith("run-") ? { status: "complete" } : undefined) },
     };
     const ctx = {
-      plugin: { id: "valet-agent" },
       config: opts.wakeGroupSeconds === undefined ? {} : { subagentWakeGroupSeconds: opts.wakeGroupSeconds },
       signal: valet.signal,
       store: store as Store,
-      scopes: { maybe: () => undefined },
+      ...openAcl,
       log: {
         warn: (m: string) => seen.warned.push(m),
         error: (m: string) => seen.warned.push(m),
@@ -448,6 +459,8 @@ describe("subagent yield window (unit)", () => {
     const [note] = t.seen.posted;
     expect(note).toMatchObject({ sessionId: "parent", role: "system", authorPrincipalId: "owner" });
     expect(note.parts[0]).toMatchObject({ type: "custom", kind: "valet-agent/subagent-end@1" });
+    expect(t.seen.as).toContainEqual({ principalId: "owner", runId: "run-parent" });
+    expect(t.seen.as).toContainEqual({ principalId: "owner", runId: "run-child" });
     expect(noteText(t, 0)).toContain("1 background subagent ended");
     expect(noteText(t, 0)).toContain("none are left running");
     expect(noteText(t, 0)).toContain("done child");
@@ -621,6 +634,7 @@ describe("subagent yield window (unit)", () => {
     await announce(t.ctx, {
       sessionId: "parent",
       principalId: "owner",
+      runId: "run-child",
       startedAt: Date.now() - 125_000,
       remaining: 2,
       outcomes: [done("Long", "x".repeat(9000)), done("Broken", "", "error", "boom")],
@@ -646,7 +660,7 @@ describe("subagent yield window (unit)", () => {
     const outcomes: Outcome[] = [
       { task: { index: 0, prompt: "p", stage: 1 }, status: "complete", reply: "ok", presented: [] },
     ];
-    const base = { principalId: "owner", startedAt: Date.now(), remaining: 0, outcomes };
+    const base = { principalId: "owner", runId: "run-child", startedAt: Date.now(), remaining: 0, outcomes };
 
     store.messages.create = async () => ({ cancelled: true, cancelReason: "denied" });
     await announce(t.ctx, { ...base, sessionId: "parent" });

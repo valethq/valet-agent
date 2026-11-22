@@ -9,6 +9,14 @@
   "provides": ["settings@2"],
   "requires": ["inference@1", "context@1"],
   "optionalRequires": ["tools@1"],
+  "acl": {
+    "permissions": {
+      "model.read": { "summary": "Read the model catalog" },
+      "command": { "summary": "Run slash commands", "resource": "session" },
+      "present": { "summary": "Present files to the user", "resource": "session", "default": "trusted" },
+      "subagent": { "summary": "Start subagents", "resource": "session" }
+    }
+  },
   "settings": {
     "sections": {
       "system": {

@@ -5,7 +5,7 @@ import type { Env } from "./env";
 import type { ModelRef } from "./model";
 import type { Outcome, RunCtx } from "./run-types";
 import { presentedOf } from "./present";
-import { listTools } from "./tools";
+import { emitToolCall, listTools } from "./tools";
 
 const MAX_STEPS = 25;
 
@@ -43,7 +43,7 @@ async function callTool(
   };
   const def = defs.get(call.name);
   if (!def) return fail("error", `unknown tool "${call.name}"`);
-  const gate = await env.ctx.events.emit("tool.call", { ...call, runId: rc.runId, role: rc.role });
+  const gate = await emitToolCall(env.ctx, rc, call);
   if (gate.cancelled)
     return fail("denied", `Denied: ${gate.denied?.reason ?? gate.cancelReason ?? "denied"}`);
   const original = call.input;
@@ -85,7 +85,7 @@ export async function runModel(
     .build({ sessionId: rc.sessionId, runId: rc.runId, model: info, role: rc.role });
   const defs = await listTools(
     env.ctx,
-    { sessionId: rc.sessionId, projectId: rc.projectId, role: rc.role },
+    { sessionId: rc.sessionId, projectId: rc.projectId, role: rc.role, caller: rc.caller },
     env.ownTools(),
   );
   const tools = [...defs.values()].map(({ name, description, inputSchema }) => ({

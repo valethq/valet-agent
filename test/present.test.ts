@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Role, ToolCall, ToolResult } from "@valethq/sdk";
 import type { AgentCtx } from "../src/env";
 import { presentedOf, presentTool } from "../src/present";
+import { aclParts, callerOf, principals } from "./acl";
 import { type Json, type Kernel, startKernel, waitFor } from "./kernel";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "valet-present-"));
@@ -12,8 +13,11 @@ const tmp = () => mkdtempSync(join(tmpdir(), "valet-present-"));
 function harness(config: Record<string, unknown> = {}) {
   const blobs: { bytes: string; meta: { mime?: string; name?: string } }[] = [];
   const ctx = {
+    ...aclParts,
     config,
     store: {
+      principals,
+      sessions: { get: () => undefined },
       blobs: {
         put: async (b: Blob, meta: { mime?: string; name?: string }) => {
           blobs.push({ bytes: await b.text(), meta });
@@ -24,7 +28,12 @@ function harness(config: Record<string, unknown> = {}) {
   } as unknown as AgentCtx;
   const tool = presentTool(ctx);
   const run = (cwd: string, input: { path?: unknown; name?: unknown }, role: Role = "owner") =>
-    tool.invoke(input, { cwd, role } as ToolCall) as Promise<ToolResult>;
+    tool.invoke(input, {
+      cwd,
+      role,
+      sessionId: "ses_1",
+      caller: callerOf(role),
+    } as ToolCall) as Promise<ToolResult>;
   return { blobs, run, tool };
 }
 

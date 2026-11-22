@@ -7,7 +7,7 @@ export default definePlugin<{ token: string }>({
     ctx.scopes.provide("identity", {
       authenticate: (req) =>
         req.headers.get("authorization") === `Bearer ${ctx.config.token}`
-          ? { principalId: principal.id }
+          ? { principalId: principal.id, verifiedLogin: true }
           : undefined,
     });
   },
