@@ -4,7 +4,7 @@
   "name": "Agent",
   "version": "0.1.0",
   "description": "Run queue, provider bridging, fallbacks, slash commands and the model catalog.",
-  "valet": "^0.1.0",
+  "valet": "^0.1.1",
   "main": "./src/index.ts",
   "provides": ["settings@2"],
   "requires": ["inference@1", "context@1"],

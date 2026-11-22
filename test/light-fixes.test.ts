@@ -60,8 +60,9 @@ describe("light fixes", () => {
     const list = (opts?: { limit?: number }) => (opts?.limit ? rows.slice(-opts.limit) : rows);
     const oldFirst = list({ limit: 20 }).find((r) => r.message.role === "user");
     const newFirst = list().find((r) => r.message.role === "user");
-    expect(textOf(oldFirst!.parts)).toBe("line-7");
-    expect(textOf(newFirst!.parts)).toBe("line-1");
+    if (!oldFirst || !newFirst) throw new Error("first user message not found");
+    expect(textOf(oldFirst.parts)).toBe("line-7");
+    expect(textOf(newFirst.parts)).toBe("line-1");
   });
 
   test("A4: copyMessages maps in-flight tool-call status to cancelled", async () => {
@@ -96,7 +97,8 @@ describe("light fixes", () => {
       },
     } as unknown as Store;
     await copyMessages(store, source, dest, 1);
-    const copied = created[0]!.parts as { status: string }[];
+    if (created[0] === undefined) throw new Error("nothing was copied");
+    const copied = created[0].parts as { status: string }[];
     expect(copied[0]?.status).toBe("cancelled");
     expect(copied[1]?.status).toBe("cancelled");
     expect(copied[2]?.status).toBe("done");

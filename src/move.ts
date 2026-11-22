@@ -1,4 +1,12 @@
-import type { Session, Store } from "@valethq/sdk";
+import {
+  type AclContext,
+  type Caller,
+  can,
+  type Decision,
+  type Session,
+  sessionResource,
+  type Store,
+} from "@valethq/sdk";
 import { agentSettings, cloneSession } from "./fork";
 
 function childrenOf(store: Store, session: Session): Session[] {
@@ -47,6 +55,25 @@ async function cloneInto(
     },
     last,
   );
+}
+
+/**
+ * The first `core:session.write` denial over the move: the source, each descendant (a session grant on the
+ * parent does not cover a child) and the destination project. Both entry points check it before moving.
+ */
+export function moveDenied(
+  ctx: AclContext,
+  caller: Caller,
+  store: Store,
+  source: Session,
+  projectId: string,
+): Extract<Decision, { allow: false }> | undefined {
+  for (const s of [source, ...descendants(store, source)]) {
+    const d = can(ctx, caller, "core:session.write", sessionResource(ctx, s.id));
+    if (!d.allow) return d;
+  }
+  const d = can(ctx, caller, "core:session.write", { id: `project:${projectId}` });
+  return d.allow ? undefined : d;
 }
 
 /** Moves a session and its subagent children to another project. The SDK can't change a session's project, so this copies each chat into a new session there and deletes the originals. */

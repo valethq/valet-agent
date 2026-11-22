@@ -10,14 +10,23 @@ interface Route {
   opts: RouteAcl;
 }
 
-function rig() {
+function rig(opts: { children?: { id: string; parentSessionId: string }[]; scopes?: object } = {}) {
+  const sessions = new Map<string, { id: string; projectId: string; parentSessionId?: string }>([
+    ["ses_1", { id: "ses_1", projectId: "prj_1" }],
+    ...(opts.children ?? []).map((c) => [c.id, { ...c, projectId: "prj_1" }] as const),
+  ]);
   const routes = new Map<string, Route>();
   const ctx = {
     ...aclParts,
+    ...(opts.scopes === undefined ? {} : { scopes: opts.scopes }),
     config: {},
     store: {
       principals,
-      sessions: { get: (id: string) => (id === "ses_1" ? { id, projectId: "prj_1" } : undefined) },
+      sessions: {
+        get: (id: string) => sessions.get(id),
+        list: ({ projectId }: { projectId?: string } = {}) =>
+          [...sessions.values()].filter((s) => projectId === undefined || s.projectId === projectId),
+      },
       projects: { get: () => undefined },
     },
     http: {
@@ -66,11 +75,46 @@ describe("route permissions", () => {
     expect(routes.get("GET /models")?.opts.resource).toBeUndefined();
   });
 
+  test("the session resource is the router's decoded :id, however the path was written", () => {
+    const { route } = rig();
+    const resource = route("GET /sessions/:id/state").opts.resource;
+    const want = { id: "session:ses_1", ancestors: ["project:prj_1"] };
+    expect(resource?.(new Request("http://x/plugins/valet-agent//sessions//ses_1/state"))).toEqual(want);
+    expect(resource?.(new Request("http://x/plugins/valet-agent/sessions/ses_%31/state"))).toEqual(want);
+  });
+
   test("move also needs write access to the destination project", async () => {
     const { call } = rig();
     const denied = await call("POST /sessions/:id/move", callerOf("trusted"), { projectId: "prj_2" });
     expect(denied.status).toBe(403);
     const allowed = await call("POST /sessions/:id/move", callerOf("owner"), { projectId: "prj_2" });
     expect(allowed.status).not.toBe(403);
+  });
+
+  const scoped = (allowed: string[]) => ({
+    maybe: () => ({
+      check: (_s: unknown, _p: string, resource?: { id: string }) =>
+        resource !== undefined && allowed.includes(resource.id)
+          ? { allow: true }
+          : { allow: false, by: "test", reason: "not granted" },
+    }),
+  });
+
+  test("a move is refused when a child session is out of the caller's grant", async () => {
+    const { call } = rig({
+      children: [{ id: "ses_kid", parentSessionId: "ses_1" }],
+      scopes: scoped(["session:ses_1", "project:prj_2"]),
+    });
+    const res = await call("POST /sessions/:id/move", callerOf("owner"), { projectId: "prj_2" });
+    expect(res.status).toBe(403);
+  });
+
+  test("a move proceeds when every session in the tree is writable", async () => {
+    const { call } = rig({
+      children: [{ id: "ses_kid", parentSessionId: "ses_1" }],
+      scopes: scoped(["session:ses_1", "session:ses_kid", "project:prj_2"]),
+    });
+    const res = await call("POST /sessions/:id/move", callerOf("owner"), { projectId: "prj_2" });
+    expect(res.status).not.toBe(403);
   });
 });

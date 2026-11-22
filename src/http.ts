@@ -1,12 +1,23 @@
-import { can, sessionResource } from "@valethq/sdk";
+import { sessionResource } from "@valethq/sdk";
 import type { Env } from "./env";
 import { forkSession } from "./fork";
 import { resolveModel } from "./model";
-import { moveSession } from "./move";
+import { moveDenied, moveSession } from "./move";
 import type { RunQueue } from "./queue";
 
-const sessionIdOf = (req: Request): string =>
-  new URL(req.url).pathname.split("/sessions/")[1]?.split("/")[0] ?? "";
+/** The `:id` core's router hands the handler: the decoded segment before the verb. */
+const sessionIdOf = (req: Request): string => {
+  const raw =
+    new URL(req.url).pathname
+      .split("/")
+      .filter((s) => s !== "")
+      .at(-2) ?? "";
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+};
 
 const failed = (error: unknown): Response => {
   const message = error instanceof Error ? error.message : String(error);
@@ -57,12 +68,11 @@ export function registerHttp(env: Env, queue: RunQueue): void {
     async (req, { params, principal, caller }) => {
       const { projectId } = await bodyOf(req);
       if (typeof projectId !== "string") return failed(new Error("projectId is required"));
-      if (!can(ctx, caller, "core:session.write", { id: `project:${projectId}` }).allow)
-        return Response.json(
-          { error: { code: "denied", reason: "no write access to the project" } },
-          { status: 403 },
-        );
       const id = params.id as string;
+      const source = ctx.store.sessions.get(id);
+      if (!source) return failed(new Error("unknown session"));
+      const denied = moveDenied(ctx, caller, ctx.store, source, projectId);
+      if (denied) return Response.json({ error: { code: "denied", reason: denied.reason } }, { status: 403 });
       const { activeRunId, queued } = queue.snapshot(id);
       try {
         const session = await moveSession(

@@ -4,7 +4,7 @@ import type { Env } from "./env";
 import { forkSession } from "./fork";
 import { modelLabel } from "./labels";
 import { parseRef, resolveModel } from "./model";
-import { moveSession } from "./move";
+import { moveDenied, moveSession } from "./move";
 import type { RunQueue } from "./queue";
 
 interface CommandCtx {
@@ -69,8 +69,11 @@ const COMMANDS: Record<string, Command> = {
         ? `No project "${arg}".`
         : `More than one project is named "${arg}"; use its id.`;
     const project = matches[0] as { id: string; name: string };
-    const from =
-      store.projects.get(store.sessions.get(sessionId)?.projectId ?? "")?.name ?? "another project";
+    const source = store.sessions.get(sessionId);
+    if (!source) return "Unknown session.";
+    const denied = moveDenied(env.ctx, caller, store, source, project.id);
+    if (denied) return `Move denied: ${denied.reason}`;
+    const from = store.projects.get(source.projectId)?.name ?? "another project";
     const { activeRunId, queued } = queue.snapshot(sessionId);
     const moved = await moveSession(
       storeFor(env, caller),

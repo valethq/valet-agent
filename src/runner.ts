@@ -135,7 +135,7 @@ export async function execute(env: Env, job: Job, active: Active): Promise<void>
     cwd: project?.workspaceDir ?? ctx.paths.data,
     runId: run.id,
     triggerSeq: job.message.seq,
-    role: job.role,
+    role: run.role,
     caller: ctx.store.runs.caller(run.id),
     content: toContent(job.parts),
     parts,
