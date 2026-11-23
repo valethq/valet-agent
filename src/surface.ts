@@ -2,7 +2,7 @@ import type { PluginContext, Role, ToolDefinition, ToolResult, ToolSpec, ToolSur
 import type { AgentConfig } from "./model";
 import type { RunCtx } from "./run-types";
 import { presentedOf } from "./present";
-import { listTools } from "./tools";
+import { emitToolCall, listTools } from "./tools";
 
 interface Active {
   rc: RunCtx;
@@ -43,7 +43,7 @@ export class ToolRouter {
   async enter(rc: RunCtx): Promise<void> {
     const found = await listTools(
       this.#ctx,
-      { sessionId: rc.sessionId, projectId: rc.projectId, role: rc.role as Role },
+      { sessionId: rc.sessionId, projectId: rc.projectId, role: rc.role as Role, caller: rc.caller },
       this.#own(),
     );
     const exposed = this.#ctx.config.exposedTools;
@@ -79,13 +79,7 @@ export class ToolRouter {
   ): Promise<{ input: unknown } | { denied: string }> {
     const rc = this.#active.get(sessionId)?.rc;
     if (!rc) return { denied: "no valet run is active for this session" };
-    const gate = await this.#ctx.events.emit("tool.call", {
-      runId: rc.runId,
-      callId,
-      name,
-      input,
-      role: rc.role,
-    });
+    const gate = await emitToolCall(this.#ctx, rc, { callId, name, input });
     if (gate.cancelled) return { denied: gate.denied?.reason ?? gate.cancelReason ?? "denied" };
     return { input: gate.payload.input };
   }

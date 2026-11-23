@@ -41,12 +41,19 @@ export function elapsed(ms: number): string {
 /**
  * Tells the parent chat that background subagents ended: a system message holding a `valet-agent/subagent-end@1`
  * part, whose type wakes the session. `remaining` is how many of the call's subagents are still to end. Written as
- * the principal behind the call, whose role the wake-up run takes. Stays quiet when valet is stopping or the chat
+ * the principal behind the call, from the child run `runId` that ended, which the wake-up run is limited by. Stays quiet when valet is stopping or the chat
  * is gone.
  */
 export async function announce(
   ctx: AgentCtx,
-  n: { sessionId: string; principalId: string; outcomes: Outcome[]; remaining: number; startedAt: number },
+  n: {
+    sessionId: string;
+    principalId: string;
+    runId: string;
+    outcomes: Outcome[];
+    remaining: number;
+    startedAt: number;
+  },
 ): Promise<void> {
   if (ctx.signal.aborted || !ctx.store.sessions.get(n.sessionId)) return;
   const { outcomes } = n;
@@ -61,7 +68,7 @@ export async function announce(
   const text = `[valet-agent] ${outcomes.length} background ${noun} ended after ${took} (${counts}); ${left}.\n\n${outcomeText(outcomes, MAX_REPLY_CHARS)}`;
   const names = outcomes.map(titleOf).join(", ");
   try {
-    const sent = await ctx.store.as({ principalId: n.principalId }).messages.create({
+    const sent = await ctx.store.as({ principalId: n.principalId, runId: n.runId }).messages.create({
       sessionId: n.sessionId,
       role: "system",
       authorPrincipalId: n.principalId,

@@ -71,3 +71,19 @@ describe("tools for agent providers", () => {
     expect((await log()).filter((l) => l.op === "open").at(-1)?.tools).toBe(3);
   });
 });
+
+describe("the run's subject on tool calls", () => {
+  test("the run is stored with a subject, and list, the hook and invoke see its stamped caller", async () => {
+    await toolsTurn();
+    const seen = (await (await fetch(`${k.base}/plugins/valet-fixture-tools/seen`)).json()) as Json;
+    const listed = seen.listed.at(-1);
+    const invoked = seen.invoked.at(-1);
+    const hooked = seen.hooked.at(-1);
+    const { principalId, runId } = invoked.actor;
+    expect(runId).toBeString();
+    for (const caller of [listed, hooked]) expect(caller.actor).toMatchObject({ principalId, runId });
+    const run = (await k.api(`/api/core/runs/${runId}`)).body;
+    expect(run.subject).toEqual({ principalId });
+    expect(run.role).toBe("owner");
+  });
+});

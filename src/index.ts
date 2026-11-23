@@ -11,7 +11,7 @@ import type { AgentConfig } from "./model";
 import { presentTool } from "./present";
 import { RunQueue } from "./queue";
 import { registerSettings } from "./settings";
-import { authorRole } from "./role";
+import { startFor } from "./subject";
 import { subagentTool } from "./subagent";
 import { SUBAGENT_END } from "./subagent-notify";
 import { placeholderPatch } from "./title";
@@ -53,12 +53,13 @@ export default definePlugin<AgentConfig>({
         const patch = placeholderPatch(session, textOf(parts));
         if (patch) void ctx.store.sessions.update(session.id, patch).catch(() => {});
       }
-      // a subagent prompt runs with its parent run's role, but only when valet-agent itself wrote it
-      const role =
-        meta.parentRunId && e.caller.plugin === ctx.plugin.id
-          ? (ctx.store.runs.get(meta.parentRunId)?.role ?? "guest")
-          : authorRole(ctx.store, message.authorPrincipalId, e.caller);
-      queue.enqueue({ sessionId: message.sessionId, message, parts, role });
+      const start = startFor(ctx.store, message, e.caller, notification || meta.parentRunId !== undefined);
+      if ("refused" in start) {
+        ctx.log.warn("derived run refused", { sessionId: message.sessionId, reason: start.refused });
+        queue.refuse(message.sessionId, message.id);
+        return;
+      }
+      queue.enqueue({ sessionId: message.sessionId, message, parts, ...start });
     });
 
     ctx.events.after("run.cancel", (e) => {

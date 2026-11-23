@@ -1,16 +1,23 @@
-import type { RouteHandler } from "@valethq/sdk";
+import { sessionResource } from "@valethq/sdk";
 import type { Env } from "./env";
 import { forkSession } from "./fork";
 import { resolveModel } from "./model";
-import { moveSession } from "./move";
+import { moveDenied, moveSession } from "./move";
 import type { RunQueue } from "./queue";
 
-const ownerOnly =
-  (handler: RouteHandler): RouteHandler =>
-  (req, ctx) =>
-    ctx.principal?.role === "owner"
-      ? handler(req, ctx)
-      : Response.json({ error: { code: "denied", reason: "owner only" } }, { status: 403 });
+/** The `:id` core's router hands the handler: the decoded segment before the verb. */
+const sessionIdOf = (req: Request): string => {
+  const raw =
+    new URL(req.url).pathname
+      .split("/")
+      .filter((s) => s !== "")
+      .at(-2) ?? "";
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+};
 
 const failed = (error: unknown): Response => {
   const message = error instanceof Error ? error.message : String(error);
@@ -29,11 +36,11 @@ const bodyOf = async (req: Request): Promise<Record<string, unknown>> => {
 export function registerHttp(env: Env, queue: RunQueue): void {
   const { ctx } = env;
 
-  ctx.http.route(
-    "GET",
-    "/models",
-    ownerOnly(async () => Response.json({ providers: await env.catalog.providers() })),
-  );
+  ctx.http.route("GET", "/models", async () => Response.json({ providers: await env.catalog.providers() }), {
+    permission: "agent:model.read",
+  });
+
+  const resourceOf = (req: Request) => sessionResource(ctx, sessionIdOf(req));
 
   const storeOf = (principalId: string | undefined) =>
     principalId ? ctx.store.as({ principalId }) : ctx.store;
@@ -41,7 +48,7 @@ export function registerHttp(env: Env, queue: RunQueue): void {
   ctx.http.route(
     "POST",
     "/sessions/:id/fork",
-    ownerOnly(async (req, { params, principal }) => {
+    async (req, { params, principal }) => {
       const { messageId } = await bodyOf(req);
       if (messageId !== undefined && typeof messageId !== "string")
         return failed(new Error("messageId must be a string"));
@@ -51,16 +58,21 @@ export function registerHttp(env: Env, queue: RunQueue): void {
       } catch (error) {
         return failed(error);
       }
-    }),
+    },
+    { permission: "core:session.write", resource: resourceOf },
   );
 
   ctx.http.route(
     "POST",
     "/sessions/:id/move",
-    ownerOnly(async (req, { params, principal }) => {
+    async (req, { params, principal, caller }) => {
       const { projectId } = await bodyOf(req);
       if (typeof projectId !== "string") return failed(new Error("projectId is required"));
       const id = params.id as string;
+      const source = ctx.store.sessions.get(id);
+      if (!source) return failed(new Error("unknown session"));
+      const denied = moveDenied(ctx, caller, ctx.store, source, projectId);
+      if (denied) return Response.json({ error: { code: "denied", reason: denied.reason } }, { status: 403 });
       const { activeRunId, queued } = queue.snapshot(id);
       try {
         const session = await moveSession(
@@ -73,13 +85,14 @@ export function registerHttp(env: Env, queue: RunQueue): void {
       } catch (error) {
         return failed(error);
       }
-    }),
+    },
+    { permission: "core:session.write", resource: resourceOf },
   );
 
   ctx.http.route(
     "GET",
     "/sessions/:id/state",
-    ownerOnly((_req, { params }) => {
+    (_req, { params }) => {
       const id = params.id as string;
       const session = ctx.store.sessions.get(id);
       if (!session)
@@ -92,6 +105,7 @@ export function registerHttp(env: Env, queue: RunQueue): void {
         ),
         ...(usage ? { usage } : {}),
       });
-    }),
+    },
+    { permission: "core:session.read", resource: resourceOf },
   );
 }

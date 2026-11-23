@@ -17,6 +17,8 @@ export interface Outcome {
   error?: string;
   reply: string;
   presented: Presented[];
+  /** The child run that answered, when one ran. */
+  runId?: string;
 }
 
 export const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
@@ -38,6 +40,7 @@ export function replyOf(store: Store, sessionId: string, runId: string | undefin
     data.type === "file" ? [{ blobId: data.blobId, name: data.name, mime: data.mime }] : [],
   );
   return {
+    ...(runId ? { runId } : {}),
     reply,
     presented,
     status: run?.status ?? "never ran",

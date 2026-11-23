@@ -64,6 +64,11 @@ export class RunQueue {
     return this.#queues.get(sessionId)?.active?.messageId;
   }
 
+  /** A message that will never run (derived work without a valid origin): ends the wait of whoever posted it. */
+  refuse(sessionId: string, messageId: string): void {
+    for (const fn of this.#listeners) fn({ sessionId, messageId });
+  }
+
   /** Removes one pending job and notifies listeners. The active run and every other job stay. */
   dropJob(sessionId: string, messageId: string): boolean {
     const queue = this.#queues.get(sessionId);

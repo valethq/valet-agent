@@ -1,12 +1,11 @@
-import type { Caller, Part } from "@valethq/sdk";
+import { type Caller, can, type Part, sessionResource } from "@valethq/sdk";
 import { compactHarness, compactWithValet } from "./compactions";
 import type { Env } from "./env";
 import { forkSession } from "./fork";
 import { modelLabel } from "./labels";
 import { parseRef, resolveModel } from "./model";
-import { moveSession } from "./move";
+import { moveDenied, moveSession } from "./move";
 import type { RunQueue } from "./queue";
-import { authorRole } from "./role";
 
 interface CommandCtx {
   env: Env;
@@ -70,8 +69,11 @@ const COMMANDS: Record<string, Command> = {
         ? `No project "${arg}".`
         : `More than one project is named "${arg}"; use its id.`;
     const project = matches[0] as { id: string; name: string };
-    const from =
-      store.projects.get(store.sessions.get(sessionId)?.projectId ?? "")?.name ?? "another project";
+    const source = store.sessions.get(sessionId);
+    if (!source) return "Unknown session.";
+    const denied = moveDenied(env.ctx, caller, store, source, project.id);
+    if (denied) return `Move denied: ${denied.reason}`;
+    const from = store.projects.get(source.projectId)?.name ?? "another project";
     const { activeRunId, queued } = queue.snapshot(sessionId);
     const moved = await moveSession(
       storeFor(env, caller),
@@ -151,7 +153,8 @@ export function registerCommands(env: Env, queue: RunQueue): void {
       const match =
         message.role === "user" && !own ? /^\/(\w+)(?:\s+([\s\S]*))?$/.exec(firstText(parts)) : null;
       const command = match && COMMANDS[(match[1] as string).toLowerCase()];
-      if (!command || authorRole(ctx.store, message.authorPrincipalId, e.caller) !== "owner") return;
+      if (!command || !can(ctx, e.caller, "agent:command", sessionResource(ctx, message.sessionId)).allow)
+        return;
       try {
         const text = await command({
           env,

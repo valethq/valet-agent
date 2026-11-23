@@ -62,8 +62,9 @@ const errorText = (error: unknown): string => (error instanceof Error ? error.me
  */
 export function startBatch(init: BatchInit, signal: AbortSignal): Batch {
   const { ctx, queue, catalog, parent, runId, author, tasks } = init;
-  const store =
-    author && ctx.store.principals.get(author) ? ctx.store.as({ principalId: author }) : ctx.store;
+  const known = author !== undefined && ctx.store.principals.get(author) !== undefined;
+  const store = known ? ctx.store.as({ principalId: author }) : ctx.store;
+  const promptStore = known ? ctx.store.as({ principalId: author, runId }) : ctx.store;
   const current = resolveModel(parent, ctx.store.projects.get(parent.projectId), ctx.config);
   const sessions = new Map<Task, Session>();
   const outcomes = new Map<Task, Outcome>();
@@ -110,7 +111,7 @@ export function startBatch(init: BatchInit, signal: AbortSignal): Batch {
     });
     let onAbort: (() => void) | undefined;
     try {
-      const sent = await store.messages.create({
+      const sent = await promptStore.messages.create({
         sessionId: child.id,
         role: "user",
         ...(author ? { authorPrincipalId: author } : {}),

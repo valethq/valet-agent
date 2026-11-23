@@ -168,6 +168,28 @@ describe("move", () => {
       "Moved here from alpha.",
     ]);
   });
+
+  test("a doubled slash or encoded id authorizes the session the router serves", async () => {
+    const { id } = await chat();
+    const other = await newSession();
+    const deny = await k.api("/plugins/valet-fixture-policy/deny", {
+      method: "POST",
+      body: { permission: "core:session.read", resource: `session:${id}` },
+    });
+    expect(deny.status).toBe(200);
+    for (const path of [
+      `/plugins/valet-agent/sessions/${id}/state`,
+      `/plugins/valet-agent//sessions//${id}//state`,
+      `/plugins/valet-agent/sessions/${id.slice(0, -1)}%${id
+        .charCodeAt(id.length - 1)
+        .toString(16)
+        .padStart(2, "0")}/state`,
+    ]) {
+      const res = await k.api(path);
+      expect(res.status).toBe(403);
+    }
+    expect((await k.api(`/plugins/valet-agent//sessions//${other}/state`)).status).toBe(200);
+  });
 });
 
 describe("subagent", () => {
