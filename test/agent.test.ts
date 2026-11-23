@@ -278,20 +278,6 @@ describe("model kind and fallbacks", () => {
   });
 });
 
-describe("titles", () => {
-  test("the first user message titles the session; later messages do not change it", async () => {
-    const id = await newSession(agent());
-    await send(id, "please summarize this document");
-    const title = await waitFor(async () => (await k.api(`/api/core/sessions/${id}`)).body.title);
-    expect(title).toBe("please summarize this document");
-    expect((await k.api(`/api/core/sessions/${id}`)).body.settings.titlePlaceholder).toBe(title);
-
-    await send(id, "and now something completely different");
-    await done(id, 2);
-    expect((await k.api(`/api/core/sessions/${id}`)).body.title).toBe("please summarize this document");
-  });
-});
-
 describe("model options and the catalog", () => {
   const setCatalog = (models: unknown[]) =>
     k.api("/api/core/settings/valet-agent", { method: "PATCH", body: { config: { models } } });

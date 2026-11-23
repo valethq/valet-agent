@@ -1,8 +1,5 @@
 import type { Message, ModelContent, Part, Store } from "@valethq/sdk";
 
-export const textOf = (parts: Part[]): string =>
-  parts.flatMap((p) => (p.data.type === "text" ? [p.data.text] : [])).join("\n");
-
 export function toContent(parts: Part[]): ModelContent[] {
   const out: ModelContent[] = [];
   for (const { data } of parts) {

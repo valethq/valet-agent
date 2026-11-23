@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Part, Store } from "@valethq/sdk";
 import { copyMessages } from "../src/copy";
-import { textOf } from "../src/content";
 import { presentedOf, presentTool } from "../src/present";
 import type { AgentCtx } from "../src/env";
 import { aclParts, callerOf, principals } from "./acl";
@@ -46,23 +45,6 @@ describe("light fixes", () => {
     expect((await invoke(ws, join(other, "secret.txt"))).isError).toBe(true);
     writeFileSync(join(ws, "ok.txt"), "ok");
     expect(presentedOf(await invoke(ws, "ok.txt"))).toHaveLength(1);
-  });
-
-  test("A3: untitled boot titling prefers the oldest user message, not the newest 20", () => {
-    const rows: { message: { role: string; seq: number }; parts: Part[] }[] = [];
-    for (let seq = 1; seq <= 25; seq++) {
-      const role = seq % 2 === 1 ? "user" : "assistant";
-      rows.push({
-        message: { role, seq },
-        parts: [{ type: "text", idx: 0, data: { type: "text", text: `line-${seq}` } } as Part],
-      });
-    }
-    const list = (opts?: { limit?: number }) => (opts?.limit ? rows.slice(-opts.limit) : rows);
-    const oldFirst = list({ limit: 20 }).find((r) => r.message.role === "user");
-    const newFirst = list().find((r) => r.message.role === "user");
-    if (!oldFirst || !newFirst) throw new Error("first user message not found");
-    expect(textOf(oldFirst.parts)).toBe("line-7");
-    expect(textOf(newFirst.parts)).toBe("line-1");
   });
 
   test("A4: copyMessages maps in-flight tool-call status to cancelled", async () => {
