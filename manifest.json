@@ -93,7 +93,7 @@
               {
                 "id": "exposedTools",
                 "label": "Tools for agent harnesses",
-                "summary": "Tool names harnesses like Claude Code and Devin may see. Unset offers every tool the run's role allows.",
+                "summary": "Tool names agent harnesses may see. Unset offers every tool the run's role allows.",
                 "advanced": true,
                 "input": {
                   "type": "multiselect",
