@@ -1,11 +1,12 @@
-import { definePlugin, type ToolDefinition } from "@valethq/sdk";
+import { definePlugin, type MessageDelivery, type ToolDefinition } from "@valethq/sdk";
 import { AgentSessions } from "./agents";
 import { Catalog } from "./catalog";
 import { registerCommands } from "./commands";
-import { isNotification, textOf } from "./content";
+import { isNotification } from "./content";
 import { agentMeta } from "./copy";
 import type { Env } from "./env";
 import { registerHttp } from "./http";
+import { provideAgent } from "./scope";
 import { ToolRouter } from "./surface";
 import type { AgentConfig } from "./model";
 import { presentTool } from "./present";
@@ -14,7 +15,6 @@ import { registerSettings } from "./settings";
 import { startFor } from "./subject";
 import { subagentTool } from "./subagent";
 import { SUBAGENT_END } from "./subagent-notify";
-import { placeholderPatch } from "./title";
 import { rewriteLegacyRefs } from "./legacy";
 
 export default definePlugin<AgentConfig>({
@@ -41,6 +41,7 @@ export default definePlugin<AgentConfig>({
     registerCommands(env, queue);
     registerHttp(env, queue);
     registerSettings(ctx, catalog, ownTools);
+    provideAgent(env, queue);
 
     ctx.events.after("message.create", (e) => {
       const { message, parts } = e.payload;
@@ -48,18 +49,20 @@ export default definePlugin<AgentConfig>({
       if (e.cancelled || (message.role !== "user" && !notification) || message.status !== "complete") return;
       const meta = agentMeta(message);
       if (meta.copiedFrom) return; // forks and moves copy history; they never rerun it
-      const session = ctx.store.sessions.get(message.sessionId);
-      if (!notification && session?.title === null) {
-        const patch = placeholderPatch(session, textOf(parts));
-        if (patch) void ctx.store.sessions.update(session.id, patch).catch(() => {});
-      }
       const start = startFor(ctx.store, message, e.caller, notification || meta.parentRunId !== undefined);
       if ("refused" in start) {
         ctx.log.warn("derived run refused", { sessionId: message.sessionId, reason: start.refused });
         queue.refuse(message.sessionId, message.id);
         return;
       }
-      queue.enqueue({ sessionId: message.sessionId, message, parts, ...start });
+      const delivery = message.meta.delivery as MessageDelivery | undefined;
+      queue.enqueue({
+        sessionId: message.sessionId,
+        message,
+        parts,
+        ...start,
+        ...(delivery === undefined ? {} : { delivery }),
+      });
     });
 
     ctx.events.after("run.cancel", (e) => {
@@ -90,12 +93,6 @@ export default definePlugin<AgentConfig>({
         for (const s of ctx.store.sessions.list({ projectId: project.id })) {
           if (s.status === "running")
             await ctx.store.sessions.update(s.id, { status: "idle" }).catch(() => {});
-          if (s.title !== null) continue;
-          try {
-            const first = ctx.store.messages.list(s.id).find(({ message }) => message.role === "user");
-            const patch = first ? placeholderPatch(s, textOf(first.parts)) : null;
-            if (patch) await ctx.store.sessions.update(s.id, patch);
-          } catch {}
         }
       }
     })().catch(() => {});

@@ -611,7 +611,7 @@ describe("compaction recorder", () => {
         }),
       },
     } as unknown as Env;
-    expect(await compactHarness(env, provider, REF, INFO, "s", "/tmp", undefined)).toBeUndefined();
+    expect(await compactHarness(env, provider, REF, INFO, "s", "/tmp", undefined)).toEqual({});
     expect(chat[0]).toMatchObject({ status: "completed" });
     expect(ends).toEqual(["completed"]);
   });

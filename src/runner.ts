@@ -1,4 +1,4 @@
-import type { Message, Part, Role, Run, RunSubject, Store } from "@valethq/sdk";
+import type { Message, MessageDelivery, Part, Role, Run, RunSubject, Store } from "@valethq/sdk";
 import { runAgent } from "./agent-run";
 import { toContent } from "./content";
 import type { Env } from "./env";
@@ -13,6 +13,8 @@ export interface Job {
   parts: Part[];
   role: Role;
   subject: RunSubject;
+  /** Per-message override of the configured queue mode. */
+  delivery?: MessageDelivery;
 }
 export interface Active {
   controller: AbortController;

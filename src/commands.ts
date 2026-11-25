@@ -1,5 +1,5 @@
-import { type Caller, can, type Part, sessionResource } from "@valethq/sdk";
-import { compactHarness, compactWithValet } from "./compactions";
+import { AgentOperationError, type Caller, can, type Part, sessionResource } from "@valethq/sdk";
+import { compactSession } from "./compact";
 import type { Env } from "./env";
 import { forkSession } from "./fork";
 import { modelLabel } from "./labels";
@@ -86,33 +86,19 @@ const COMMANDS: Record<string, Command> = {
     return undefined;
   },
   async compact({ env, queue, sessionId, arg }) {
-    const { store } = env.ctx;
-    const session = store.sessions.get(sessionId);
-    if (!session) return "Unknown session.";
-    if (queue.snapshot(sessionId).activeRunId) return "A turn is running. Compact once it finishes.";
-    const project = store.projects.get(session.projectId);
-    const cand = env.catalog.normalize(resolveModel(session, project, env.ctx.config));
-    const provider = env.ctx.scopes.maybe("inference", cand.provider);
-    if (!provider) return `Compaction failed: no inference provider "${cand.provider}".`;
-    const info = await env.catalog.info(cand);
+    if (!env.ctx.store.sessions.get(sessionId)) return "Unknown session.";
     // Compaction runs after this returns: the send must not wait on it, or the client times out and resends.
-    const cwd = project?.workspaceDir ?? env.ctx.paths.data;
-    const instructions = arg === "" ? undefined : arg;
-    const job =
-      provider.kind === "model"
-        ? compactWithValet(env, provider, cand, info, sessionId, "manual", env.ctx.signal).then(
-            () => undefined,
-          )
-        : compactHarness(env, provider, cand, info, sessionId, cwd, instructions);
-    job.then(
-      (text) => {
+    void compactSession(env, queue, sessionId, arg === "" ? undefined : arg, "manual").then(
+      ({ text }) => {
         if (text !== undefined) return postReply(env, sessionId, text);
       },
       (error: unknown) =>
         postReply(
           env,
           sessionId,
-          `Compaction failed: ${error instanceof Error ? error.message : String(error)}`,
+          error instanceof AgentOperationError
+            ? error.message
+            : `Compaction failed: ${error instanceof Error ? error.message : String(error)}`,
         ),
     );
     return undefined;

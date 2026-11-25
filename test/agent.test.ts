@@ -147,6 +147,21 @@ describe("agent kind", () => {
     expect((await k.api(`/api/core/runs/${first}`)).body.status).toBe("cancelled");
   });
 
+  test("a message with delivery interrupt stops the running turn although queueMode is queue", async () => {
+    const id = await newSession(agent());
+    await send(id, "slow first");
+    const first = await waitFor(async () => (await state(id)).activeRunId);
+    await k.api(`/api/core/sessions/${id}/messages`, {
+      method: "POST",
+      body: { role: "user", parts: [{ type: "text", text: "second" }], delivery: "interrupt" },
+    });
+    const [a, b] = await done(id, 2);
+    expect(a?.message.status).toBe("interrupted");
+    expect(b?.message.status).toBe("complete");
+    expect(textOf(b as Entry)).toBe("Hello, second");
+    expect((await k.api(`/api/core/runs/${first}`)).body.status).toBe("cancelled");
+  });
+
   test("/stop cancels the active run and replies", async () => {
     const id = await newSession(agent());
     await send(id, "slow one");
@@ -275,20 +290,6 @@ describe("model kind and fallbacks", () => {
       status: "error",
       error: "boom",
     });
-  });
-});
-
-describe("titles", () => {
-  test("the first user message titles the session; later messages do not change it", async () => {
-    const id = await newSession(agent());
-    await send(id, "please summarize this document");
-    const title = await waitFor(async () => (await k.api(`/api/core/sessions/${id}`)).body.title);
-    expect(title).toBe("please summarize this document");
-    expect((await k.api(`/api/core/sessions/${id}`)).body.settings.titlePlaceholder).toBe(title);
-
-    await send(id, "and now something completely different");
-    await done(id, 2);
-    expect((await k.api(`/api/core/sessions/${id}`)).body.title).toBe("please summarize this document");
   });
 });
 

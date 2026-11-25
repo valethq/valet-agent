@@ -144,7 +144,17 @@ export async function autoCompact(
   }
 }
 
-/** `/compact` on a harness session: the harness compacts its own context; valet only opens and closes the marker. Returns a reply only for a refusal or failure. */
+export interface CompactReply {
+  /** Set when the provider refused or the compaction failed. */
+  text?: string;
+  /** The provider has no compact at all. */
+  unsupported?: boolean;
+}
+
+/**
+ * Compaction on a harness session: the harness compacts its own context; valet only opens and closes the marker.
+ * Answers with a reply only for a refusal or failure.
+ */
 export async function compactHarness(
   env: Env,
   provider: AgentProvider,
@@ -153,11 +163,14 @@ export async function compactHarness(
   sessionId: string,
   cwd: string,
   instructions: string | undefined,
-): Promise<string | undefined> {
+): Promise<CompactReply> {
   const entry = await env.agents.acquire(provider, sessionId, cwd, ref.model, runOptions(ref, info));
   const session = entry.session;
   if (!session.compact)
-    return `${provider.label} can't be asked to compact. It compacts on its own when it needs to.`;
+    return {
+      text: `${provider.label} can't be asked to compact. It compacts on its own when it needs to.`,
+      unsupported: true,
+    };
   const recorder = new CompactionRecorder(env.ctx, sessionId, provider.label);
   await recorder.start();
   let completed = false;
@@ -174,7 +187,7 @@ export async function compactHarness(
   } finally {
     await recorder.end("failed", error ?? "the harness reported no compaction");
   }
-  if (error !== undefined) return `Compaction failed: ${error}`;
+  if (error !== undefined) return { text: `Compaction failed: ${error}` };
   // success is shown by the marker itself, so no reply text
-  return completed ? undefined : `Compaction failed: ${provider.label} reported no compaction.`;
+  return completed ? {} : { text: `Compaction failed: ${provider.label} reported no compaction.` };
 }
