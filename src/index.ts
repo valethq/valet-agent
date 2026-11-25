@@ -1,4 +1,4 @@
-import { definePlugin, type ToolDefinition } from "@valethq/sdk";
+import { definePlugin, type MessageDelivery, type ToolDefinition } from "@valethq/sdk";
 import { AgentSessions } from "./agents";
 import { Catalog } from "./catalog";
 import { registerCommands } from "./commands";
@@ -6,6 +6,7 @@ import { isNotification } from "./content";
 import { agentMeta } from "./copy";
 import type { Env } from "./env";
 import { registerHttp } from "./http";
+import { provideAgent } from "./scope";
 import { ToolRouter } from "./surface";
 import type { AgentConfig } from "./model";
 import { presentTool } from "./present";
@@ -40,6 +41,7 @@ export default definePlugin<AgentConfig>({
     registerCommands(env, queue);
     registerHttp(env, queue);
     registerSettings(ctx, catalog, ownTools);
+    provideAgent(env, queue);
 
     ctx.events.after("message.create", (e) => {
       const { message, parts } = e.payload;
@@ -53,7 +55,14 @@ export default definePlugin<AgentConfig>({
         queue.refuse(message.sessionId, message.id);
         return;
       }
-      queue.enqueue({ sessionId: message.sessionId, message, parts, ...start });
+      const delivery = message.meta.delivery as MessageDelivery | undefined;
+      queue.enqueue({
+        sessionId: message.sessionId,
+        message,
+        parts,
+        ...start,
+        ...(delivery === undefined ? {} : { delivery }),
+      });
     });
 
     ctx.events.after("run.cancel", (e) => {

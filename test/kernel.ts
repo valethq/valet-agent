@@ -42,7 +42,10 @@ export async function waitFor<T>(
   }
 }
 
-export async function startKernel(home = mkdtempSync(join(tmpdir(), "valet-agent-"))): Promise<Kernel> {
+export async function startKernel(
+  home = mkdtempSync(join(tmpdir(), "valet-agent-")),
+  opts: { agentConfig?: Record<string, unknown> } = {},
+): Promise<Kernel> {
   mkdirSync(home, { recursive: true });
   const port = await freePort();
   const own = join(home, "plugins", "valet-agent");
@@ -58,7 +61,10 @@ export async function startKernel(home = mkdtempSync(join(tmpdir(), "valet-agent
     JSON.stringify({
       server: { port },
       pluginPaths: [PLUGINS, join(home, "plugins")],
-      plugins: { "valet-fixture-auth": { config: { token: "tok" } } },
+      plugins: {
+        "valet-fixture-auth": { config: { token: "tok" } },
+        ...(opts.agentConfig === undefined ? {} : { "valet-agent": { config: opts.agentConfig } }),
+      },
     }),
   );
   const proc = Bun.spawn(["bun", CLI, "start", "--home", home], {

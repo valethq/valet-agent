@@ -17,19 +17,38 @@ export class RunQueue {
   readonly #env: Env;
   readonly #queues = new Map<string, SessionQueue>();
   readonly #listeners = new Set<(f: Finished) => void>();
+  /** Sessions with a compaction in flight; their pending jobs wait for it. */
+  readonly #compacting = new Map<string, Promise<void>>();
 
   constructor(env: Env) {
     this.#env = env;
   }
 
   enqueue(job: Job): void {
+    const delivery = job.delivery ?? this.#env.ctx.config.queueMode;
     const queue = this.#queues.get(job.sessionId) ?? { pending: [], draining: false };
     this.#queues.set(job.sessionId, queue);
-    if (this.#env.ctx.config.queueMode === "interrupt" && queue.active) {
+    if (delivery === "interrupt" && queue.active) {
       queue.pending.unshift(job);
       void this.cancelActive(job.sessionId, this.#env.ctx.plugin.id);
     } else queue.pending.push(job);
     void this.#drain(job.sessionId, queue);
+  }
+
+  /** Holds the session's queue until the returned function is called; used while a compaction runs. */
+  async beginCompact(sessionId: string): Promise<() => void> {
+    const previous = this.#compacting.get(sessionId);
+    if (previous) await previous;
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.#compacting.set(sessionId, promise);
+    return () => {
+      if (this.#compacting.get(sessionId) !== promise) return;
+      this.#compacting.delete(sessionId);
+      release();
+    };
   }
 
   async cancelActive(sessionId: string, by: string): Promise<boolean> {
@@ -100,6 +119,8 @@ export class RunQueue {
     await this.#setStatus(sessionId, "running");
     try {
       for (let job = queue.pending.shift(); job; job = queue.pending.shift()) {
+        const compacting = this.#compacting.get(sessionId);
+        if (compacting) await compacting;
         queue.active = { controller: new AbortController(), messageId: job.message.id };
         try {
           await execute(this.#env, job, queue.active);
