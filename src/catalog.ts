@@ -1,4 +1,4 @@
-import type { InferenceProvider, ModelInfo, ModelRef } from "@valethq/sdk";
+import type { CatalogModel, CatalogProvider, InferenceProvider, ModelInfo, ModelRef } from "@valethq/sdk";
 import type { AgentCtx } from "./env";
 
 /** One row of valet-agent's `models` config: an override of a listed model, a custom model, or ("*") a provider default. */
@@ -15,23 +15,6 @@ export interface CatalogRow {
   fast?: boolean;
   /** Not in the provider's list; its id is passed to the provider as is. */
   custom?: boolean;
-}
-
-export interface CatalogModel extends ModelInfo {
-  /** In pickers. */
-  show: boolean;
-  custom: boolean;
-  /** What the provider lists, before overrides; absent for custom models. */
-  base?: ModelInfo;
-}
-
-export interface CatalogProvider {
-  provider: string;
-  kind: InferenceProvider["kind"];
-  label: string;
-  icon?: string;
-  error?: string;
-  models: CatalogModel[];
 }
 
 const CUSTOM_DEFAULTS = { contextWindow: 128_000, maxOutputTokens: 32_000 } as const;

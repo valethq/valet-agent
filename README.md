@@ -4,6 +4,16 @@ Run queue, provider bridging, fallbacks and slash commands.
 
 A [valet](https://github.com/valethq/valet-core) plugin. Imports `@valethq/sdk` only.
 
+## `agent@1`
+
+This plugin provides `agent@1` (cardinality one): `models()`, `state(id)`, `fork(id, { messageId?, subject? })`, `move(id, projectId, { subject? })` and `compact(id, { instructions?, subject? })`. Consumers call the scope instead of knowing this plugin's id; `valet-ui` proxies the browser through routes in its own namespace. Cancellation stays on core's `POST /api/core/runs/:id/cancel`, keyed by run id.
+
+`subject` is the authenticated request subject a trusted consumer delegates. The provider combines it with the consumer's stamped plugin id for the ACL check, and writes `store.as()` messages for its principal.
+
+A message may carry `meta.delivery` (`"queue"` or `"interrupt"`) to override the configured `queueMode` for that message. The `POST /api/core/sessions/:id/messages` route takes it as a first-class `delivery` field. Compaction holds the session's queue, so a message sent mid-compact waits instead of sharing the harness session.
+
+The plugin's own routes (`/models`, `/sessions/:id/{state,fork,move}`) still answer; `agent@1` is the supported path.
+
 ## Tools for providers
 
 Valet's `tools@1` tools reach every provider through a `ToolSurface` (SDK `ToolSurface`). Agent providers get it in `open()` as `opts.tools`; model providers get the tool specs in each request. The surface is bound to the session: `list()` and `call()` follow the run that is active. `valet-agent` filters the list by the run's role and by `exposedTools`, and runs the `tool.call` gate inside `call()`, so providers never enforce policy. How a provider exposes its surface is the provider's choice; agent providers can mount it as an MCP server on their own route with the SDK's `toolEndpoint` helper.

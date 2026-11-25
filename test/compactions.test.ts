@@ -165,14 +165,17 @@ describe("compactHarness", () => {
       "/tmp",
       "keep the todo list",
     );
-    expect(reply).toBeUndefined();
+    expect(reply).toEqual({});
     expect(chat[0]).toMatchObject({ status: "completed", by: "Fake agent" });
   });
 
   test("a harness without compact gets a plain refusal, no marker", async () => {
     chat.length = 0;
     const reply = await compactHarness(harness({}), provider, REF, INFO, "s", "/tmp", undefined);
-    expect(reply).toBe("Fake agent can't be asked to compact. It compacts on its own when it needs to.");
+    expect(reply).toEqual({
+      text: "Fake agent can't be asked to compact. It compacts on its own when it needs to.",
+      unsupported: true,
+    });
     expect(chat).toEqual([]);
   });
 
@@ -184,7 +187,7 @@ describe("compactHarness", () => {
       },
     };
     const reply = await compactHarness(harness(session), provider, REF, INFO, "s", "/tmp", undefined);
-    expect(reply).toBe("Compaction failed: no such command");
+    expect(reply).toEqual({ text: "Compaction failed: no such command" });
     expect(chat[0]).toMatchObject({ status: "failed", error: "no such command" });
   });
 });

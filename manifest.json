@@ -6,7 +6,7 @@
   "description": "Run queue, provider bridging, fallbacks, slash commands and the model catalog.",
   "valet": "^0.1.1",
   "main": "./src/index.ts",
-  "provides": ["settings@2"],
+  "provides": ["settings@2", "agent@1"],
   "requires": ["inference@1", "context@1"],
   "optionalRequires": ["tools@1"],
   "acl": {
@@ -232,7 +232,7 @@
                 "summary": "Overrides and models added by hand, by provider.",
                 "input": {
                   "type": "list",
-                  "style": "table",
+                  "style": "model-catalog",
                   "default": [],
                   "item": {
                     "type": "group",
